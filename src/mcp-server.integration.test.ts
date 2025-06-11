@@ -4,11 +4,14 @@ import { Client } from '@modelcontextprotocol/sdk/client/index.js';
 import { InMemoryTransport } from '@modelcontextprotocol/sdk/inMemory.js';
 import { ListToolsResultSchema, TextContent, CallToolResult } from '@modelcontextprotocol/sdk/types.js';
 import { getServer } from './mcp-server.js';
-import { makeApiCall } from './api.js';
 
-// Mock the entire api module to prevent real API calls
+// Create an explicit mock function *before* mocking the module.
+const mockedMakeApiCall = jest.fn();
+
+// Mock the entire api module to prevent real API calls.
+// Now, when ./api.js is imported, its makeApiCall property will be our mock function.
 jest.mock('./api.js', () => ({
-    makeApiCall: jest.fn(),
+    makeApiCall: mockedMakeApiCall,
 }));
 
 // Also mock the EntityManager to control its behavior
@@ -18,9 +21,6 @@ jest.mock('./entityManager.js', () => ({
     })),
 }));
 
-// Cast the imported, now-mocked function to jest.Mock for type safety
-const mockedMakeApiCall = makeApiCall as jest.Mock;
-
 describe('MCP Server Integration Tests', () => {
     let mcpServer: McpServer;
     let client: Client;
@@ -28,7 +28,7 @@ describe('MCP Server Integration Tests', () => {
     let serverTransport: InMemoryTransport;
 
     beforeEach(async () => {
-        // Reset mocks before each test
+        // Reset mocks before each test. This will now work correctly.
         mockedMakeApiCall.mockClear();
 
         // Get a fresh server instance
