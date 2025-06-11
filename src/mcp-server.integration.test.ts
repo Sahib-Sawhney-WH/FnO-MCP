@@ -1,13 +1,10 @@
-import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
-import { Client } from '@modelcontextprotocol/sdk/client/index.js';
-import { InMemoryTransport } from '@modelcontextprotocol/sdk/inMemory.js';
-// Added CallToolResult to the import for type assertion
-import { ListToolsResultSchema, TextContent, CallToolResult } from '@modelcontextprotocol/sdk/types.js';
-import { getServer } from './mcp-server.js';
-import { makeApiCall } from './api.js';
 import { jest, describe, it, expect, beforeEach } from '@jest/globals';
 import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { Client } from '@modelcontextprotocol/sdk/client/index.js';
+import { InMemoryTransport } from '@modelcontextprotocol/sdk/inMemory.js';
+import { ListToolsResultSchema, TextContent, CallToolResult } from '@modelcontextprotocol/sdk/types.js';
+import { getServer } from './mcp-server.js';
+import { makeApiCall } from './api.js';
 
 // Mock the entire api module to prevent real API calls
 jest.mock('./api.js', () => ({
@@ -21,6 +18,7 @@ jest.mock('./entityManager.js', () => ({
     })),
 }));
 
+// Cast the imported, now-mocked function to jest.Mock for type safety
 const mockedMakeApiCall = makeApiCall as jest.Mock;
 
 describe('MCP Server Integration Tests', () => {
@@ -69,7 +67,7 @@ describe('MCP Server Integration Tests', () => {
             name: 'getODataMetadata',
             arguments: {} // Add this empty arguments object
         }) as CallToolResult;
-
+        
         expect(mockedMakeApiCall).toHaveBeenCalledWith(
             'GET',
             expect.stringContaining('/data/$metadata'), // Check that the correct endpoint is called
@@ -87,7 +85,8 @@ describe('MCP Server Integration Tests', () => {
     });
 
     it('should use EntityManager to correct entity name in odataQuery tool', async () => {
-        mockedApi.makeApiCall.mockResolvedValue({
+        // Mock the response for the odataQuery tool
+        mockedMakeApiCall.mockResolvedValue({
             content: [{ type: 'text', text: '{"value": [{"id": 1}]}' }],
         });
 
@@ -97,7 +96,7 @@ describe('MCP Server Integration Tests', () => {
         });
 
         // Verify that makeApiCall was called with the *corrected* entity name
-        expect(mockedApi.makeApiCall).toHaveBeenCalledWith(
+        expect(mockedMakeApiCall).toHaveBeenCalledWith(
             'GET',
             expect.stringContaining('/data/CustomersV3'), // Should be corrected
             null,
