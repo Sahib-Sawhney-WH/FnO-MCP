@@ -1,28 +1,26 @@
-import { jest, describe, it, expect, beforeEach, afterEach } from '@jest/globals';
+import { describe, it, expect, beforeEach, afterEach } from '@jest/globals';
 import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { Client } from '@modelcontextprotocol/sdk/client/index.js';
 import { InMemoryTransport } from '@modelcontextprotocol/sdk/inMemory.js';
 import { ListToolsResultSchema, TextContent, CallToolResult } from '@modelcontextprotocol/sdk/types.js';
 import { getServer } from './mcp-server.js';
-import * as api from './api.js'; // Import the entire module as a namespace
 
 // --- MOCK SETUP ---
 
-// 1. Mock the entire 'api.js' module. This must be at the top level.
+// 1. Create a mock function that we'll use for makeApiCall
+const mockMakeApiCall = jest.fn();
+
+// 2. Mock the api module with the mock function
 jest.mock('./api.js', () => ({
-    makeApiCall: jest.fn()
+    makeApiCall: mockMakeApiCall
 }));
 
-// 2. Mock the EntityManager as before.
+// 3. Mock the EntityManager
 jest.mock('./entityManager.js', () => ({
     EntityManager: jest.fn().mockImplementation(() => ({
         findBestMatch: jest.fn().mockResolvedValue('CustomersV3'),
     })),
 }));
-
-// 3. For type safety, cast the imported function to jest.Mock within the tests.
-const mockedMakeApiCall = jest.mocked(api.makeApiCall);
-
 
 // --- TEST SUITE ---
 
@@ -34,7 +32,7 @@ describe('MCP Server Integration Tests', () => {
 
     beforeEach(async () => {
         // Clear the mock's history before each test.
-        mockedMakeApiCall.mockClear();
+        mockMakeApiCall.mockClear();
 
         // Get a fresh server instance
         mcpServer = getServer();
@@ -53,7 +51,8 @@ describe('MCP Server Integration Tests', () => {
     });
 
     afterEach(() => {
-        // No need to restore spies, as we are using jest.mock()
+        // Reset mocks after each test
+        jest.clearAllMocks();
     });
 
     it('should list all available tools', async () => {
@@ -63,12 +62,12 @@ describe('MCP Server Integration Tests', () => {
         const toolNames = result.tools.map(t => t.name);
         expect(toolNames).toContain('odataQuery');
         expect(toolNames).toContain('createCustomer');
-        expect(mockedMakeApiCall).not.toHaveBeenCalled();
+        expect(mockMakeApiCall).not.toHaveBeenCalled();
     });
 
     it('should call getODataMetadata tool successfully', async () => {
         // Configure the mock's return value for this specific test
-        mockedMakeApiCall.mockResolvedValue({
+        mockMakeApiCall.mockResolvedValue({
             content: [{ type: 'text', text: '<metadata>...</metadata>' }],
         });
 
@@ -77,7 +76,7 @@ describe('MCP Server Integration Tests', () => {
             arguments: {}
         }) as CallToolResult;
         
-        expect(mockedMakeApiCall).toHaveBeenCalledWith(
+        expect(mockMakeApiCall).toHaveBeenCalledWith(
             'GET',
             expect.stringContaining('/data/$metadata'),
             null,
@@ -92,7 +91,7 @@ describe('MCP Server Integration Tests', () => {
 
     it('should use EntityManager to correct entity name in odataQuery tool', async () => {
         // Configure the mock's return value for this specific test
-        mockedMakeApiCall.mockResolvedValue({
+        mockMakeApiCall.mockResolvedValue({
             content: [{ type: 'text', text: '{"value": [{"id": 1}]}' }],
         });
 
@@ -102,7 +101,7 @@ describe('MCP Server Integration Tests', () => {
         });
 
         // Verify the mock was called correctly
-        expect(mockedMakeApiCall).toHaveBeenCalledWith(
+        expect(mockMakeApiCall).toHaveBeenCalledWith(
             'GET',
             expect.stringContaining('/data/CustomersV3'),
             null,

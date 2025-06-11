@@ -1,8 +1,8 @@
 import { AuthManager } from './auth.js';
-import * as stringSimilarity from 'string-similarity';
+import Fuse from 'fuse.js';
 
-// You can adjust this threshold. A lower value is more lenient.
-const SIMILARITY_THRESHOLD = 0.4;
+// Threshold for fuzzy matching (0 = exact match, 1 = match anything)
+const FUZZY_THRESHOLD = 0.6;
 
 interface ODataEntity {
     name: string;
@@ -15,6 +15,7 @@ interface ODataEntity {
 export class EntityManager {
     private entityCache: ODataEntity[] | null = null;
     private authManager = new AuthManager();
+    private fuse: Fuse<ODataEntity> | null = null;
 
     /**
      * Finds the best matching OData entity name for a given user query.
@@ -24,15 +25,23 @@ export class EntityManager {
     public async findBestMatch(query: string): Promise<string | null> {
         if (!this.entityCache) {
             this.entityCache = await this.fetchEntities();
+            // Initialize Fuse with the entity cache
+            this.fuse = new Fuse(this.entityCache, {
+                keys: ['name', 'url'],
+                threshold: FUZZY_THRESHOLD,
+                includeScore: true
+            });
         }
 
-        const entityNames = this.entityCache.map(e => e.name);
-        const bestMatch = stringSimilarity.findBestMatch(query, entityNames);
+        if (!this.fuse || this.entityCache.length === 0) {
+            return null;
+        }
 
-        if (bestMatch.bestMatch.rating > SIMILARITY_THRESHOLD) {
-            const matchedEntity = this.entityCache.find(e => e.name === bestMatch.bestMatch.target);
+        const results = this.fuse.search(query);
+        
+        if (results.length > 0 && results[0].score !== undefined && results[0].score <= FUZZY_THRESHOLD) {
             // The 'url' field from the service document is the correct name to use in API calls
-            return matchedEntity ? matchedEntity.url : null;
+            return results[0].item.url;
         }
 
         return null;
