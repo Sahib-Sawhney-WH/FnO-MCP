@@ -4,9 +4,18 @@ import { Client } from '@modelcontextprotocol/sdk/client/index.js';
 import { InMemoryTransport } from '@modelcontextprotocol/sdk/inMemory.js';
 import { ListToolsResultSchema, TextContent, CallToolResult } from '@modelcontextprotocol/sdk/types.js';
 import { getServer } from './mcp-server.js';
-import * as api from './api.js'; // Import the entire module as a namespace
+import { makeApiCall } from './api.js';
 
-// Mock the EntityManager to control its behavior
+// This is the key change. We create a mock function that will be called *by* our module mock.
+const makeApiCallMock = jest.fn();
+
+// Mock the api module. The mocked makeApiCall function will delegate its behavior to our mock above.
+// This is the correct way to mock ES modules when you need to change behavior per-test.
+jest.mock('./api.js', () => ({
+    makeApiCall: (...args: any[]) => makeApiCallMock(...args),
+}));
+
+// Mock the EntityManager as before.
 jest.mock('./entityManager.js', () => ({
     EntityManager: jest.fn().mockImplementation(() => ({
         findBestMatch: jest.fn().mockResolvedValue('CustomersV3'),
@@ -18,14 +27,10 @@ describe('MCP Server Integration Tests', () => {
     let client: Client;
     let clientTransport: InMemoryTransport;
     let serverTransport: InMemoryTransport;
-    let makeApiCallSpy: jest.SpyInstance;
 
     beforeEach(async () => {
-        // Use jest.spyOn to mock the makeApiCall function.
-        // Provide a default mock implementation that does nothing.
-        makeApiCallSpy = jest.spyOn(api, 'makeApiCall').mockImplementation(async () => {
-            return { content: [{ type: 'text', text: 'Default mock response' }] };
-        });
+        // Clear the mock's history before each test.
+        makeApiCallMock.mockClear();
 
         // Get a fresh server instance
         mcpServer = getServer();
@@ -44,8 +49,7 @@ describe('MCP Server Integration Tests', () => {
     });
 
     afterEach(() => {
-        // Restore the original function after each test to ensure test isolation
-        makeApiCallSpy.mockRestore();
+        // No need for restore here as we're not using spies.
     });
 
     it('should list all available tools', async () => {
@@ -55,13 +59,13 @@ describe('MCP Server Integration Tests', () => {
         const toolNames = result.tools.map(t => t.name);
         expect(toolNames).toContain('odataQuery');
         expect(toolNames).toContain('createCustomer');
-        // This test does not call the API, so the spy should not be called.
-        expect(makeApiCallSpy).not.toHaveBeenCalled();
+        // This test does not call the API, so the mock should not be called.
+        expect(makeApiCallMock).not.toHaveBeenCalled();
     });
 
     it('should call getODataMetadata tool successfully', async () => {
         // Mock a specific response for this test case
-        makeApiCallSpy.mockResolvedValue({
+        makeApiCallMock.mockResolvedValue({
             content: [{ type: 'text', text: '<metadata>...</metadata>' }],
         });
 
@@ -70,7 +74,7 @@ describe('MCP Server Integration Tests', () => {
             arguments: {}
         }) as CallToolResult;
         
-        expect(makeApiCallSpy).toHaveBeenCalledWith(
+        expect(makeApiCallMock).toHaveBeenCalledWith(
             'GET',
             expect.stringContaining('/data/$metadata'),
             null,
@@ -86,7 +90,7 @@ describe('MCP Server Integration Tests', () => {
 
     it('should use EntityManager to correct entity name in odataQuery tool', async () => {
         // Mock a specific response for this test case
-        makeApiCallSpy.mockResolvedValue({
+        makeApiCallMock.mockResolvedValue({
             content: [{ type: 'text', text: '{"value": [{"id": 1}]}' }],
         });
 
@@ -95,8 +99,8 @@ describe('MCP Server Integration Tests', () => {
             arguments: { entity: 'customer' }
         });
 
-        // Verify that the spy was called with the *corrected* entity name
-        expect(makeApiCallSpy).toHaveBeenCalledWith(
+        // Verify that the mock was called with the *corrected* entity name
+        expect(makeApiCallMock).toHaveBeenCalledWith(
             'GET',
             expect.stringContaining('/data/CustomersV3'),
             null,
