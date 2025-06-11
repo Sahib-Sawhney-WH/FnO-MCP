@@ -54,7 +54,7 @@ export const getServer = (): McpServer => {
             if (queryParams.expand) url.searchParams.append('$expand', queryParams.expand);
             if (queryParams.top) url.searchParams.append('$top', queryParams.top.toString());
 
-            return makeApiCall('GET', url.toString(), null, sendNotification); [cite: 1987]
+            return makeApiCall('GET', url.toString(), null, sendNotification);
         }
     );
     
