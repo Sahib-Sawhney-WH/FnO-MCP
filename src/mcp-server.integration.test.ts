@@ -1,7 +1,7 @@
 import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { Client } from '@modelcontextprotocol/sdk/client/index.js';
 import { InMemoryTransport } from '@modelcontextprotocol/sdk/inMemory.js';
-// Added TextContent and CallToolResult to the import for type assertion
+// Added CallToolResult to the import for type assertion
 import { ListToolsResultSchema, TextContent, CallToolResult } from '@modelcontextprotocol/sdk/types.js';
 import { getServer } from './mcp-server.js';
 import * as api from './api.js';
@@ -61,7 +61,8 @@ describe('MCP Server Integration Tests', () => {
             content: [{ type: 'text', text: '<metadata>...</metadata>' }],
         });
 
-        const result: CallToolResult = await client.callTool({ name: 'getODataMetadata' });
+        // Use an explicit type cast on the result of the await expression
+        const result = await client.callTool({ name: 'getODataMetadata' }) as CallToolResult;
 
         expect(mockedApi.makeApiCall).toHaveBeenCalledWith(
             'GET',
