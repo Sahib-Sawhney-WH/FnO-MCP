@@ -191,25 +191,59 @@ server.tool(
 
 ## Deploying to Azure
 
-This repository includes a GitHub Actions workflow file at `.github/workflows/main_fno-mcp.yml` that automates building and deploying the application to an Azure Web App.
+You can deploy this application directly to an Azure Web App service. The repository includes a sample GitHub Actions workflow file at `.github/workflows/main_fno-mcp.yml` that can be adapted for your deployment pipeline.
 
-### Understanding Server State
+### Step 1: Create an Azure Web App
 
-This MCP server is **stateful**. In `src/index.ts`, it maintains an in-memory `transports` object to keep track of every active client session. This is a common and efficient pattern for managing stateful connections like those used by MCP's Streamable HTTP transport.
+First, you need to create the Web App resource in the Azure Portal.
 
-However, this has an important implication for deployment: if you scale your web app to run on multiple server instances, a load balancer might send requests from the same client to different instances. The new instance would not have the client's session in its memory, causing the request to fail.
+1.  Go to the [Azure Portal](https://portal.azure.com) and click **Create a resource**.
+2.  Search for "Web App" and click **Create**.
+3.  Fill out the **Basics** tab with the following settings:
+    -   **Subscription:** Choose your Azure subscription.
+    -   **Resource Group:** Create a new one or select an existing one.
+    -   **Name:** Give your app a globally unique name (e.g., `fno-mcp-server-yourname`).
+    -   **Publish:** Select **Code**.
+    -   **Runtime stack:** Select **Node 22 LTS**.
+    -   **Operating System:** Select **Linux**.
+    -   **Region:** Choose a region close to you.
+4.  Configure the **App Service Plan** based on your needs (a Free F1 tier is sufficient for testing).
+5.  Click **Review + create**, then **Create** to provision the resource.
 
-### Configuration for Azure Web Apps
+### Step 2: Configure GitHub Deployment
 
-To ensure the server works correctly when deployed, you **must** enable session affinity (also known as "sticky sessions"). This tells the Azure load balancer to always route requests from a specific client back to the same server instance they originally connected to.
+Once the Web App is created, configure it to automatically deploy from your GitHub repository.
 
-**How to Enable Session Affinity:**
+1.  Navigate to your newly created Web App resource in the Azure Portal.
+2.  In the left-hand menu, under "Deployment", click on **Deployment Center**.
+3.  For the **Source**, select **GitHub**.
+4.  Authorize Azure to access your GitHub account if you haven't already.
+5.  Configure the build settings:
+    -   **Organization:** Select your GitHub username or organization.
+    -   **Repository:** Select your `fno-mcp-server` repository.
+    -   **Branch:** Select `main`.
+6.  Azure will detect the Node.js project and suggest a workflow. Review the settings and click **Save**. This will commit a workflow file to your repository in the `.github/workflows/` directory. Any subsequent pushes to your `main` branch will automatically trigger a new deployment to your Azure Web App.
 
-1.  Go to the [Azure Portal](https://portal.azure.com).
-2.  Navigate to your Web App resource (e.g., "FnO-MCP").
-3.  In the left-hand menu, go to **Configuration** > **General settings**.
-4.  Under the "Platform settings" tab, find the **Session affinity** setting.
-5.  Set it to **On**.
-6.  Click **Save**.
+### Step 3: Configure Environment Variables
 
-With this setting enabled, your stateful server will function correctly even when scaled across multiple instances in your Azure App Service Plan.
+Your deployed application needs access to the same secrets as your local environment.
+
+1.  In your Web App's menu, go to **Configuration** > **Application settings**.
+2.  Under "Application settings", click **+ New application setting** to add each of the variables from your local `.env` file:
+    -   `TENANT_ID`
+    -   `CLIENT_ID`
+    -   `CLIENT_SECRET`
+    -   `DYNAMICS_RESOURCE_URL`
+    -   `PORT` (optional, Azure provides this automatically but you can set it to `8080`)
+3.  Click **Save**. The app will restart with the new settings.
+
+### Step 4: Configure Session Affinity (Required)
+
+This MCP server is **stateful**. It maintains an in-memory `transports` object to keep track of every active client session. For this to work correctly when the app is scaled across multiple instances, you must enable session affinity.
+
+1.  In your Web App's menu, go to **Configuration** > **General settings**.
+2.  Under the "Platform settings" tab, find the **Session affinity** setting.
+3.  Set it to **On**.
+4.  Click **Save**.
+
+With these steps completed, your server will be running on Azure and will automatically update whenever you push changes to your `main` branch.
