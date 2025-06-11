@@ -1,7 +1,8 @@
 import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { Client } from '@modelcontextprotocol/sdk/client/index.js';
 import { InMemoryTransport } from '@modelcontextprotocol/sdk/inMemory.js';
-import { ListToolsResultSchema } from '@modelcontextprotocol/sdk/types.js';
+// Added TextContent to the import to use for type assertion
+import { ListToolsResultSchema, TextContent } from '@modelcontextprotocol/sdk/types.js';
 import { getServer } from './mcp-server.js';
 import * as api from './api.js';
 
@@ -68,7 +69,13 @@ describe('MCP Server Integration Tests', () => {
             null,
             expect.any(Function)
         );
-        expect(result.content[0].text).toBe('<metadata>...</metadata>');
+        
+        // FIX: Add checks for content existence and use a type assertion
+        expect(result.content).toBeDefined();
+        expect(result.content.length).toBe(1);
+        const textContent = result.content[0] as TextContent;
+        expect(textContent.type).toBe('text');
+        expect(textContent.text).toBe('<metadata>...</metadata>');
     });
 
     it('should use EntityManager to correct entity name in odataQuery tool', async () => {
