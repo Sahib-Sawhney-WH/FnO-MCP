@@ -1,7 +1,3 @@
-Of course. I have updated your `README.md` to reflect the new fuzzy-matching capability for the `odataQuery` tool and the new `entityManager.ts` file in the architecture.
-
-Here is the updated README:
-
 -----
 
 # Dynamics 365 Finance & Operations MCP Server
