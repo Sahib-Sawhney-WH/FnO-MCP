@@ -2,13 +2,11 @@ import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { z } from 'zod';
 import { makeApiCall } from './api.js';
 import { EntityManager } from './entityManager.js';
-// Added imports for official SDK types
-import { RequestHandlerExtra } from '@modelcontextprotocol/sdk/server/protocol.js';
+// Corrected the import path for SDK types
+import { RequestHandlerExtra } from '@modelcontextprotocol/sdk/shared/protocol.js';
 import { ServerRequest, ServerNotification } from '@modelcontextprotocol/sdk/types.js';
 
 const entityManager = new EntityManager();
-
-// The custom McpToolContext interface is no longer needed.
 
 // Define schemas for Zod validation to infer types from them later
 const odataQuerySchema = z.object({
