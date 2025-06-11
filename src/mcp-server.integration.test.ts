@@ -72,6 +72,7 @@ describe('MCP Server Integration Tests', () => {
         
         // FIX: Add checks for content existence and use a type assertion
         expect(result.content).toBeDefined();
+        expect(Array.isArray(result.content)).toBe(true);
         expect(result.content.length).toBe(1);
         const textContent = result.content[0] as TextContent;
         expect(textContent.type).toBe('text');
