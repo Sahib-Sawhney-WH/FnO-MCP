@@ -2,13 +2,13 @@ import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { z } from 'zod';
 import { makeApiCall } from './api.js';
 import { EntityManager } from './entityManager.js';
+// Added imports for official SDK types
+import { RequestHandlerExtra } from '@modelcontextprotocol/sdk/server/protocol.js';
+import { ServerRequest, ServerNotification } from '@modelcontextprotocol/sdk/types.js';
 
 const entityManager = new EntityManager();
 
-// A local interface to work around a type that is not exported from the SDK
-interface McpToolContext {
-    sendNotification: (notification: any) => void;
-}
+// The custom McpToolContext interface is no longer needed.
 
 // Define schemas for Zod validation to infer types from them later
 const odataQuerySchema = z.object({
@@ -19,30 +19,24 @@ const odataQuerySchema = z.object({
     top: z.number().optional().describe("OData $top query parameter."),
     crossCompany: z.boolean().optional().describe("Set to true to query across all companies."),
 });
-
 const createCustomerSchema = z.object({
     customerData: z.record(z.unknown()).describe("A JSON object for the new customer. Must include dataAreaId, CustomerAccount, etc."),
 });
-
 const updateCustomerSchema = z.object({
     dataAreaId: z.string().describe("The dataAreaId of the customer (e.g., 'usmf')."),
     customerAccount: z.string().describe("The customer account ID to update (e.g., 'PM-001')."),
     updateData: z.record(z.unknown()).describe("A JSON object with the fields to update."),
 });
-
 const getEntityCountSchema = z.object({
     entity: z.string().describe("The OData entity set to count (e.g., CustomersV3)."),
     crossCompany: z.boolean().optional().describe("Set to true to count across all companies."),
 });
-
 const createSystemUserSchema = z.object({
      userData: z.record(z.unknown()).describe("A JSON object for the new system user. Must include UserID, Alias, Company, etc."),
 });
-
 const assignUserRoleSchema = z.object({
     associationData: z.record(z.unknown()).describe("JSON object for the role association. Must include UserId and SecurityRoleIdentifier."),
 });
-
 const updatePositionHierarchySchema = z.object({
     positionId: z.string().describe("The ID of the position to update."),
     hierarchyTypeName: z.string().describe("The hierarchy type name (e.g., 'Line')."),
@@ -51,9 +45,8 @@ const updatePositionHierarchySchema = z.object({
     updateData: z.record(z.unknown()).describe("A JSON object with the fields to update (e.g., ParentPositionId)."),
 });
 
-
 /**
- * Creates and configures the MCP server with all the tools for the D365 API. 
+ * Creates and configures the MCP server with all the tools for the D365 API.
  * @returns {McpServer} The configured McpServer instance. 
  */
 export const getServer = (): McpServer => {
@@ -68,10 +61,10 @@ export const getServer = (): McpServer => {
         'odataQuery',
         'Executes a generic GET request against a Dynamics 365 OData entity. The entity name does not need to be case-perfect.',
         odataQuerySchema.shape,
-        async (args: z.infer<typeof odataQuerySchema>, { sendNotification }: McpToolContext) => {
+        async (args: z.infer<typeof odataQuerySchema>, context: RequestHandlerExtra<ServerRequest, ServerNotification>) => {
             
             const correctedEntity = await entityManager.findBestMatch(args.entity);
-
+    
             if (!correctedEntity) {
                 return {
                     isError: true,
@@ -79,7 +72,7 @@ export const getServer = (): McpServer => {
                 };
             }
             
-            await sendNotification({
+            await context.sendNotification({
                 method: "notifications/message",
                 params: { level: "info", data: `Corrected entity name from '${args.entity}' to '${correctedEntity}'.` }
             });
@@ -93,17 +86,17 @@ export const getServer = (): McpServer => {
             if (queryParams.expand) url.searchParams.append('$expand', queryParams.expand);
             if (queryParams.top) url.searchParams.append('$top', queryParams.top.toString());
 
-            return makeApiCall('GET', url.toString(), null, sendNotification);
+            return makeApiCall('GET', url.toString(), null, context.sendNotification);
         }
     );
-    
+
     server.tool(
         'createCustomer',
         'Creates a new customer record in CustomersV3.',
         createCustomerSchema.shape,
-        async ({ customerData }: z.infer<typeof createCustomerSchema>, { sendNotification }: McpToolContext) => {
+        async ({ customerData }: z.infer<typeof createCustomerSchema>, context: RequestHandlerExtra<ServerRequest, ServerNotification>) => {
             const url = `${process.env.DYNAMICS_RESOURCE_URL}/data/CustomersV3`;
-            return makeApiCall('POST', url, customerData as Record<string, unknown>, sendNotification);
+            return makeApiCall('POST', url, customerData as Record<string, unknown>, context.sendNotification);
         }
     );
 
@@ -111,9 +104,9 @@ export const getServer = (): McpServer => {
         'updateCustomer',
         'Updates an existing customer record in CustomersV3 using a PATCH request.',
         updateCustomerSchema.shape,
-        async ({ dataAreaId, customerAccount, updateData }: z.infer<typeof updateCustomerSchema>, { sendNotification }: McpToolContext) => {
+        async ({ dataAreaId, customerAccount, updateData }: z.infer<typeof updateCustomerSchema>, context: RequestHandlerExtra<ServerRequest, ServerNotification>) => {
             const url = `${process.env.DYNAMICS_RESOURCE_URL}/data/CustomersV3(dataAreaId='${dataAreaId}',CustomerAccount='${customerAccount}')`;
-            return makeApiCall('PATCH', url, updateData as Record<string, unknown>, sendNotification);
+            return makeApiCall('PATCH', url, updateData as Record<string, unknown>, context.sendNotification);
         }
     );
 
@@ -121,20 +114,20 @@ export const getServer = (): McpServer => {
         'getEntityCount',
         'Gets the total count of records for a given OData entity.',
         getEntityCountSchema.shape,
-        async ({ entity, crossCompany }: z.infer<typeof getEntityCountSchema>, { sendNotification }: McpToolContext) => {
+        async ({ entity, crossCompany }: z.infer<typeof getEntityCountSchema>, context: RequestHandlerExtra<ServerRequest, ServerNotification>) => {
              const url = new URL(`${process.env.DYNAMICS_RESOURCE_URL}/data/${entity}/$count`);
              if (crossCompany) url.searchParams.append('cross-company', 'true');
-             return makeApiCall('GET', url.toString(), null, sendNotification);
+             return makeApiCall('GET', url.toString(), null, context.sendNotification);
         }
     );
-    
+
     server.tool(
         'createSystemUser',
         'Creates a new user in SystemUsers.',
         createSystemUserSchema.shape,
-        async ({ userData }: z.infer<typeof createSystemUserSchema>, { sendNotification }: McpToolContext) => {
+        async ({ userData }: z.infer<typeof createSystemUserSchema>, context: RequestHandlerExtra<ServerRequest, ServerNotification>) => {
             const url = `${process.env.DYNAMICS_RESOURCE_URL}/data/SystemUsers`;
-            return makeApiCall('POST', url, userData as Record<string, unknown>, sendNotification);
+            return makeApiCall('POST', url, userData as Record<string, unknown>, context.sendNotification);
         }
     );
 
@@ -142,9 +135,9 @@ export const getServer = (): McpServer => {
         'assignUserRole',
         'Assigns a security role to a user in SecurityUserRoleAssociations.',
         assignUserRoleSchema.shape,
-        async ({ associationData }: z.infer<typeof assignUserRoleSchema>, { sendNotification }: McpToolContext) => {
+        async ({ associationData }: z.infer<typeof assignUserRoleSchema>, context: RequestHandlerExtra<ServerRequest, ServerNotification>) => {
             const url = `${process.env.DYNAMICS_RESOURCE_URL}/data/SecurityUserRoleAssociations`;
-            return makeApiCall('POST', url, associationData as Record<string, unknown>, sendNotification);
+            return makeApiCall('POST', url, associationData as Record<string, unknown>, context.sendNotification);
         }
     );
 
@@ -152,29 +145,29 @@ export const getServer = (): McpServer => {
         'updatePositionHierarchy',
         'Updates a position in PositionHierarchies.',
         updatePositionHierarchySchema.shape,
-        async ({ positionId, hierarchyTypeName, validFrom, validTo, updateData }: z.infer<typeof updatePositionHierarchySchema>, { sendNotification }: McpToolContext) => {
+        async ({ positionId, hierarchyTypeName, validFrom, validTo, updateData }: z.infer<typeof updatePositionHierarchySchema>, context: RequestHandlerExtra<ServerRequest, ServerNotification>) => {
             const url = `${process.env.DYNAMICS_RESOURCE_URL}/data/PositionHierarchies(PositionId='${positionId}',HierarchyTypeName='${hierarchyTypeName}',ValidFrom=${validFrom},ValidTo=${validTo})`;
-            return makeApiCall('PATCH', url, updateData as Record<string, unknown>, sendNotification);
+            return makeApiCall('PATCH', url, updateData as Record<string, unknown>, context.sendNotification);
         }
     );
-    
+
     server.tool(
         'action_initializeDataManagement',
         'Executes the InitializeDataManagement action on the DataManagementDefinitionGroups entity.',
         z.object({}).shape,
-        async (_args: {}, { sendNotification }: McpToolContext) => {
+        async (_args: {}, context: RequestHandlerExtra<ServerRequest, ServerNotification>) => {
             const url = `${process.env.DYNAMICS_RESOURCE_URL}/data/DataManagementDefinitionGroups/Microsoft.Dynamics.DataEntities.InitializeDataManagement`;
-            return makeApiCall('POST', url, {}, sendNotification);
+            return makeApiCall('POST', url, {}, context.sendNotification);
         }
     );
-    
+
     server.tool(
         'getODataMetadata',
         'Retrieves the OData $metadata document for the service.',
         z.object({}).shape,
-        async (_args: {}, { sendNotification }: McpToolContext) => {
+        async (_args: {}, context: RequestHandlerExtra<ServerRequest, ServerNotification>) => {
              const url = `${process.env.DYNAMICS_RESOURCE_URL}/data/$metadata`;
-             return makeApiCall('GET', url.toString(), null, sendNotification);
+             return makeApiCall('GET', url.toString(), null, context.sendNotification);
         }
     );
 

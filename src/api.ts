@@ -3,15 +3,7 @@ import { AuthManager } from './auth.js';
 
 const authManager = new AuthManager();
 
-/**
- * A helper function to make authenticated API calls to Dynamics 365.
- * It gets a token, makes the fetch call, and formats the response for MCP.
- * @param method The HTTP method (GET, POST, PATCH).
- * @param url The full URL for the API endpoint.
- * @param body The request body for POST/PATCH requests.
- * @param sendNotification The function to send notifications back to the MCP client.
- * @returns {Promise<CallToolResult>} The result of the tool call.
- */
+// ... (existing function signature)
 export async function makeApiCall(
     method: 'GET' | 'POST' | 'PATCH',
     url: string,
@@ -47,7 +39,18 @@ export async function makeApiCall(
                 method: "notifications/message",
                 params: { level: "error", data: `API call failed with status ${response.status}: ${responseText}` }
             });
-            return { isError: true, content: [{ type: 'text', text: `API Error: ${response.status}\n${responseText}` }] };
+
+            // --- IMPROVEMENT START ---
+            // Try to parse the error as JSON for a more structured response
+            try {
+                const errorJson = JSON.parse(responseText);
+                const prettyError = JSON.stringify(errorJson, null, 2);
+                return { isError: true, content: [{ type: 'text', text: `API Error: ${response.status}\n${prettyError}` }] };
+            } catch (e) {
+                // If parsing fails, fall back to the original text response
+                return { isError: true, content: [{ type: 'text', text: `API Error: ${response.status}\n${responseText}` }] };
+            }
+            // --- IMPROVEMENT END ---
         }
 
         const contentType = response.headers.get("Content-Type");

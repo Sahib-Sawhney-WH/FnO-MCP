@@ -11,6 +11,7 @@ The server handles authentication with Azure AD, including caching the bearer to
 -   **Efficient:** Automatically caches the authentication token and refreshes it only when it's about to expire. It also caches the OData entity list to provide fast and fuzzy matching on entity names.
 -   **User-Friendly:** The `odataQuery` tool uses a string-similarity algorithm to find the correct entity, even if the user's input has the wrong case or is slightly misspelled.
 -   **Well-Structured:** The project is organized by concern, separating the Express server, MCP tool definitions, API communication layer, and authentication logic.
+-   **Tested:** Includes a testing suite with Jest for unit and integration tests to ensure reliability and maintainability.
 -   **Extensible:** Easily add new tools to expose more D365 F&O entities or actions.
 
 ---
@@ -29,27 +30,38 @@ Follow these steps to get the server up and running.
 
 ### 1. Get the Code
 
-Clone or download this repository to your local machine.
+Clone this repository to your local machine.
 
-### 2. Create the Environment File
-
-Create a file named `.env` in the root directory of the project. This file will store your secret credentials. Populate it with your Azure AD and Dynamics 365 details.
-
-**`.env` file example:**
+```bash
+git clone <repository-url>
+cd <repository-directory>
 ```
-# .env
 
-# Azure AD and App Registration Details
-TENANT_ID=your-azure-ad-tenant-id
-CLIENT_ID=your-application-client-id
-CLIENT_SECRET=your-client-secret-value
+### 2. Configure Environment Variables
 
-# Dynamics 365 F&O Environment URL
-DYNAMICS_RESOURCE_URL=[https://your-d365-environment.operations.dynamics.com](https://your-d365-environment.operations.dynamics.com)
+This project uses a `.env` file to manage secret credentials.
 
-# Optional Port for the server
-# PORT=3000
-```
+1.  **Create a `.env` file** by copying the example template:
+    ```bash
+    cp .env.example .env
+    ```
+
+2.  **Edit the `.env` file** and populate it with your Azure AD and Dynamics 365 details.
+
+    ```dotenv
+    # .env - Your secret credentials
+
+    # Azure AD and App Registration Details
+    TENANT_ID=your-azure-ad-tenant-id
+    CLIENT_ID=your-application-client-id
+    CLIENT_SECRET=your-client-secret-value
+
+    # Dynamics 365 F&O Environment URL
+    DYNAMICS_RESOURCE_URL=[https://your-d365-environment.operations.dynamics.com](https://your-d365-environment.operations.dynamics.com)
+
+    # Optional Port for the server
+    # PORT=3000
+    ```
 
 ### 3. Install Dependencies
 
@@ -89,6 +101,24 @@ For a production environment, you should first build the TypeScript code into Ja
     ```
 
 Once running, the server will be available at `http://localhost:3000` (or the port you specify in the `.env` file). The MCP endpoint is `http://localhost:3000/mcp`.
+
+---
+
+## Testing Strategy
+
+This project uses [Jest](https://jestjs.io/) as its testing framework. Tests are located alongside the source files they are testing (e.g., `auth.test.ts` tests `auth.ts`).
+
+The testing strategy includes:
+-   **Unit Tests:** To test individual modules, like the `AuthManager`, in isolation. These tests use mocking to simulate external dependencies like `fetch`.
+-   **Integration Tests:** To test how different parts of the MCP server work together. These tests use the SDK's `InMemoryTransport` to simulate a client-server connection without making real network calls, allowing for fast and reliable verification of tool definitions and behaviors.
+
+### Running Tests
+
+To run the entire test suite, execute the following command:
+
+```bash
+npm test
+```
 
 ---
 
@@ -132,12 +162,16 @@ Adding a new tool is straightforward.
     -   Provide a `toolName`.
     -   Provide a `description` for the LLM.
     -   Define the `arguments` schema using `zod`.
-    -   In the callback function, call the `makeApiCall` helper from `api.ts` with the correct method, URL, and body.
+    -   In the callback function, use the `context` parameter to access `sendNotification` and other request-specific data. Call the `makeApiCall` helper from `api.ts` with the correct method, URL, and body.
 
 **Example: Adding a tool to get Vendor Groups**
 
 ```typescript
 // Inside src/mcp-server.ts, within the getServer function
+import { RequestHandlerExtra } from '@modelcontextprotocol/sdk/server/protocol.js';
+import { ServerRequest, ServerNotification } from '@modelcontextprotocol/sdk/types.js';
+
+// ...
 
 server.tool(
     'getVendorGroups',
@@ -145,10 +179,37 @@ server.tool(
     {
         crossCompany: z.boolean().optional().describe("Set to true to query across all companies."),
     },
-    async ({ crossCompany }, { sendNotification }) => {
+    async ({ crossCompany }, context: RequestHandlerExtra<ServerRequest, ServerNotification>) => {
          const url = new URL(`${process.env.DYNAMICS_RESOURCE_URL}/data/VendorGroups`);
          if (crossCompany) url.searchParams.append('cross-company', 'true');
-         return makeApiCall('GET', url.toString(), null, sendNotification);
+         return makeApiCall('GET', url.toString(), null, context.sendNotification);
     }
 );
 ```
+
+---
+
+## Deploying to Azure
+
+This repository includes a GitHub Actions workflow file at `.github/workflows/main_fno-mcp.yml` that automates building and deploying the application to an Azure Web App.
+
+### Understanding Server State
+
+This MCP server is **stateful**. In `src/index.ts`, it maintains an in-memory `transports` object to keep track of every active client session. This is a common and efficient pattern for managing stateful connections like those used by MCP's Streamable HTTP transport.
+
+However, this has an important implication for deployment: if you scale your web app to run on multiple server instances, a load balancer might send requests from the same client to different instances. The new instance would not have the client's session in its memory, causing the request to fail.
+
+### Configuration for Azure Web Apps
+
+To ensure the server works correctly when deployed, you **must** enable session affinity (also known as "sticky sessions"). This tells the Azure load balancer to always route requests from a specific client back to the same server instance they originally connected to.
+
+**How to Enable Session Affinity:**
+
+1.  Go to the [Azure Portal](https://portal.azure.com).
+2.  Navigate to your Web App resource (e.g., "FnO-MCP").
+3.  In the left-hand menu, go to **Configuration** > **General settings**.
+4.  Under the "Platform settings" tab, find the **Session affinity** setting.
+5.  Set it to **On**.
+6.  Click **Save**.
+
+With this setting enabled, your stateful server will function correctly even when scaled across multiple instances in your Azure App Service Plan.
