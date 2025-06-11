@@ -9,7 +9,9 @@ import * as api from './api.js'; // Import the entire module as a namespace
 // --- MOCK SETUP ---
 
 // 1. Mock the entire 'api.js' module. This must be at the top level.
-jest.mock('./api.js');
+jest.mock('./api.js', () => ({
+    makeApiCall: jest.fn()
+}));
 
 // 2. Mock the EntityManager as before.
 jest.mock('./entityManager.js', () => ({
@@ -19,7 +21,7 @@ jest.mock('./entityManager.js', () => ({
 }));
 
 // 3. For type safety, cast the imported function to jest.Mock within the tests.
-const mockedMakeApiCall = api.makeApiCall as jest.Mock;
+const mockedMakeApiCall = jest.mocked(api.makeApiCall);
 
 
 // --- TEST SUITE ---
