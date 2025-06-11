@@ -1,4 +1,6 @@
 import { AuthManager } from './auth.js';
+import { jest, describe, it, expect, beforeEach } from '@jest/globals';
+import { AuthManager } from './auth.js';
 
 // Mock the global fetch function
 global.fetch = jest.fn();

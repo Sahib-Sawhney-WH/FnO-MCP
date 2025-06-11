@@ -5,6 +5,9 @@ import { InMemoryTransport } from '@modelcontextprotocol/sdk/inMemory.js';
 import { ListToolsResultSchema, TextContent, CallToolResult } from '@modelcontextprotocol/sdk/types.js';
 import { getServer } from './mcp-server.js';
 import * as api from './api.js';
+import { jest, describe, it, expect, beforeEach } from '@jest/globals';
+import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
+import { Client } from '@modelcontextprotocol/sdk/client/index.js';
 
 // Mock the entire api module to prevent real API calls
 jest.mock('./api.js', () => ({
@@ -66,7 +69,7 @@ describe('MCP Server Integration Tests', () => {
             name: 'getODataMetadata',
             arguments: {} // Add this empty arguments object
         }) as CallToolResult;
-        
+
         expect(mockedApi.makeApiCall).toHaveBeenCalledWith(
             'GET',
             expect.stringContaining('/data/$metadata'), // Check that the correct endpoint is called
