@@ -1,6 +1,4 @@
-// src/api.ts
-
-import { CallToolResult } from '@modelcontextprotocol/sdk/types';
+import { CallToolResult } from '@modelcontextprotocol/sdk/types.js';
 import { AuthManager } from './auth.js';
 
 const authManager = new AuthManager();

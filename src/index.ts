@@ -1,7 +1,7 @@
 import express from 'express';
 import { randomUUID } from 'node:crypto';
-import { StreamableHTTPServerTransport } from '@modelcontextprotocol/sdk/server/streamableHttp';
-import { isInitializeRequest } from '@modelcontextprotocol/sdk/types';
+import { StreamableHTTPServerTransport } from '@modelcontextprotocol/sdk/server/streamableHttp.js';
+import { isInitializeRequest } from '@modelcontextprotocol/sdk/types.js';
 import { getServer } from './mcp-server.js';
 import 'dotenv/config';
 
@@ -20,7 +20,7 @@ app.all('/mcp', async (req, res) => {
     } else if (!sessionId && isInitializeRequest(req.body)) {
         transport = new StreamableHTTPServerTransport({
             sessionIdGenerator: () => randomUUID(),
-            onsessioninitialized: (newSessionId) => {
+            onsessioninitialized: (newSessionId: string) => {
                 console.log(`Session initialized with ID: ${newSessionId}`);
                 transports[newSessionId] = transport;
             },
