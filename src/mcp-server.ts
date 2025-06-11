@@ -8,6 +8,16 @@ import { ServerRequest, ServerNotification } from '@modelcontextprotocol/sdk/typ
 
 const entityManager = new EntityManager();
 
+// Helper function to safely send notifications
+async function safeNotification(context: RequestHandlerExtra<ServerRequest, ServerNotification>, notification: any): Promise<void> {
+    try {
+        await context.sendNotification(notification);
+    } catch (error) {
+        // Silently ignore notification errors (e.g., in test environments)
+        console.log('Notification failed (this is normal in test environments):', error);
+    }
+}
+
 // Define schemas for Zod validation to infer types from them later
 const odataQuerySchema = z.object({
     entity: z.string().describe("The OData entity set to query (e.g., CustomersV3, ReleasedProductsV2)."),
@@ -70,7 +80,7 @@ export const getServer = (): McpServer => {
                 };
             }
             
-            await context.sendNotification({
+            await safeNotification(context, {
                 method: "notifications/message",
                 params: { level: "info", data: `Corrected entity name from '${args.entity}' to '${correctedEntity}'.` }
             });
@@ -84,7 +94,9 @@ export const getServer = (): McpServer => {
             if (queryParams.expand) url.searchParams.append('$expand', queryParams.expand);
             if (queryParams.top) url.searchParams.append('$top', queryParams.top.toString());
 
-            return makeApiCall('GET', url.toString(), null, context.sendNotification);
+            return makeApiCall('GET', url.toString(), null, async (notification) => {
+                await safeNotification(context, notification);
+            });
         }
     );
 
@@ -94,7 +106,9 @@ export const getServer = (): McpServer => {
         createCustomerSchema.shape,
         async ({ customerData }: z.infer<typeof createCustomerSchema>, context: RequestHandlerExtra<ServerRequest, ServerNotification>) => {
             const url = `${process.env.DYNAMICS_RESOURCE_URL}/data/CustomersV3`;
-            return makeApiCall('POST', url, customerData as Record<string, unknown>, context.sendNotification);
+            return makeApiCall('POST', url, customerData as Record<string, unknown>, async (notification) => {
+                await safeNotification(context, notification);
+            });
         }
     );
 
@@ -104,7 +118,9 @@ export const getServer = (): McpServer => {
         updateCustomerSchema.shape,
         async ({ dataAreaId, customerAccount, updateData }: z.infer<typeof updateCustomerSchema>, context: RequestHandlerExtra<ServerRequest, ServerNotification>) => {
             const url = `${process.env.DYNAMICS_RESOURCE_URL}/data/CustomersV3(dataAreaId='${dataAreaId}',CustomerAccount='${customerAccount}')`;
-            return makeApiCall('PATCH', url, updateData as Record<string, unknown>, context.sendNotification);
+            return makeApiCall('PATCH', url, updateData as Record<string, unknown>, async (notification) => {
+                await safeNotification(context, notification);
+            });
         }
     );
 
@@ -115,7 +131,9 @@ export const getServer = (): McpServer => {
         async ({ entity, crossCompany }: z.infer<typeof getEntityCountSchema>, context: RequestHandlerExtra<ServerRequest, ServerNotification>) => {
              const url = new URL(`${process.env.DYNAMICS_RESOURCE_URL}/data/${entity}/$count`);
              if (crossCompany) url.searchParams.append('cross-company', 'true');
-             return makeApiCall('GET', url.toString(), null, context.sendNotification);
+             return makeApiCall('GET', url.toString(), null, async (notification) => {
+                await safeNotification(context, notification);
+            });
         }
     );
 
@@ -125,7 +143,9 @@ export const getServer = (): McpServer => {
         createSystemUserSchema.shape,
         async ({ userData }: z.infer<typeof createSystemUserSchema>, context: RequestHandlerExtra<ServerRequest, ServerNotification>) => {
             const url = `${process.env.DYNAMICS_RESOURCE_URL}/data/SystemUsers`;
-            return makeApiCall('POST', url, userData as Record<string, unknown>, context.sendNotification);
+            return makeApiCall('POST', url, userData as Record<string, unknown>, async (notification) => {
+                await safeNotification(context, notification);
+            });
         }
     );
 
@@ -135,7 +155,9 @@ export const getServer = (): McpServer => {
         assignUserRoleSchema.shape,
         async ({ associationData }: z.infer<typeof assignUserRoleSchema>, context: RequestHandlerExtra<ServerRequest, ServerNotification>) => {
             const url = `${process.env.DYNAMICS_RESOURCE_URL}/data/SecurityUserRoleAssociations`;
-            return makeApiCall('POST', url, associationData as Record<string, unknown>, context.sendNotification);
+            return makeApiCall('POST', url, associationData as Record<string, unknown>, async (notification) => {
+                await safeNotification(context, notification);
+            });
         }
     );
 
@@ -145,7 +167,9 @@ export const getServer = (): McpServer => {
         updatePositionHierarchySchema.shape,
         async ({ positionId, hierarchyTypeName, validFrom, validTo, updateData }: z.infer<typeof updatePositionHierarchySchema>, context: RequestHandlerExtra<ServerRequest, ServerNotification>) => {
             const url = `${process.env.DYNAMICS_RESOURCE_URL}/data/PositionHierarchies(PositionId='${positionId}',HierarchyTypeName='${hierarchyTypeName}',ValidFrom=${validFrom},ValidTo=${validTo})`;
-            return makeApiCall('PATCH', url, updateData as Record<string, unknown>, context.sendNotification);
+            return makeApiCall('PATCH', url, updateData as Record<string, unknown>, async (notification) => {
+                await safeNotification(context, notification);
+            });
         }
     );
 
@@ -155,7 +179,9 @@ export const getServer = (): McpServer => {
         z.object({}).shape,
         async (_args: {}, context: RequestHandlerExtra<ServerRequest, ServerNotification>) => {
             const url = `${process.env.DYNAMICS_RESOURCE_URL}/data/DataManagementDefinitionGroups/Microsoft.Dynamics.DataEntities.InitializeDataManagement`;
-            return makeApiCall('POST', url, {}, context.sendNotification);
+            return makeApiCall('POST', url, {}, async (notification) => {
+                await safeNotification(context, notification);
+            });
         }
     );
 
@@ -165,7 +191,9 @@ export const getServer = (): McpServer => {
         z.object({}).shape,
         async (_args: {}, context: RequestHandlerExtra<ServerRequest, ServerNotification>) => {
              const url = `${process.env.DYNAMICS_RESOURCE_URL}/data/$metadata`;
-             return makeApiCall('GET', url.toString(), null, context.sendNotification);
+             return makeApiCall('GET', url.toString(), null, async (notification) => {
+                await safeNotification(context, notification);
+            });
         }
     );
 

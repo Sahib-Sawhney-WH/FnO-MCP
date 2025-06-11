@@ -3,15 +3,24 @@ import { AuthManager } from './auth.js';
 
 const authManager = new AuthManager();
 
-// ... (existing function signature)
+// Helper function to safely send notifications
+async function safeNotify(sendNotification: (notification: any) => void | Promise<void>, notification: any): Promise<void> {
+    try {
+        await sendNotification(notification);
+    } catch (error) {
+        // Silently ignore notification errors (e.g., in test environments)
+        // This is expected in test environments where notifications aren't supported
+    }
+}
+
 export async function makeApiCall(
     method: 'GET' | 'POST' | 'PATCH',
     url: string,
     body: Record<string, unknown> | null,
-    sendNotification: (notification: any) => void
+    sendNotification: (notification: any) => void | Promise<void>
 ): Promise<CallToolResult> {
     try {
-        await sendNotification({
+        await safeNotify(sendNotification, {
             method: "notifications/message",
             params: { level: "info", data: `Calling ${method} ${url}` }
         });
@@ -35,12 +44,11 @@ export async function makeApiCall(
         const responseText = await response.text();
 
         if (!response.ok) {
-            await sendNotification({
+            await safeNotify(sendNotification, {
                 method: "notifications/message",
                 params: { level: "error", data: `API call failed with status ${response.status}: ${responseText}` }
             });
 
-            // --- IMPROVEMENT START ---
             // Try to parse the error as JSON for a more structured response
             try {
                 const errorJson = JSON.parse(responseText);
@@ -50,7 +58,6 @@ export async function makeApiCall(
                 // If parsing fails, fall back to the original text response
                 return { isError: true, content: [{ type: 'text', text: `API Error: ${response.status}\n${responseText}` }] };
             }
-            // --- IMPROVEMENT END ---
         }
 
         const contentType = response.headers.get("Content-Type");
@@ -68,7 +75,7 @@ export async function makeApiCall(
     } catch (error) {
         const errorMessage = error instanceof Error ? error.message : String(error);
         console.error(`Error in makeApiCall: ${errorMessage}`);
-        await sendNotification({
+        await safeNotify(sendNotification, {
             method: "notifications/message",
             params: { level: "error", data: `An unexpected error occurred: ${errorMessage}` }
         });
