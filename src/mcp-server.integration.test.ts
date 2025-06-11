@@ -1,8 +1,8 @@
 import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { Client } from '@modelcontextprotocol/sdk/client/index.js';
 import { InMemoryTransport } from '@modelcontextprotocol/sdk/inMemory.js';
-// Added TextContent to the import to use for type assertion
-import { ListToolsResultSchema, TextContent } from '@modelcontextprotocol/sdk/types.js';
+// Added TextContent and CallToolResult to the import for type assertion
+import { ListToolsResultSchema, TextContent, CallToolResult } from '@modelcontextprotocol/sdk/types.js';
 import { getServer } from './mcp-server.js';
 import * as api from './api.js';
 
@@ -61,7 +61,7 @@ describe('MCP Server Integration Tests', () => {
             content: [{ type: 'text', text: '<metadata>...</metadata>' }],
         });
 
-        const result = await client.callTool({ name: 'getODataMetadata' });
+        const result: CallToolResult = await client.callTool({ name: 'getODataMetadata' });
 
         expect(mockedApi.makeApiCall).toHaveBeenCalledWith(
             'GET',
@@ -70,7 +70,7 @@ describe('MCP Server Integration Tests', () => {
             expect.any(Function)
         );
         
-        // FIX: Add checks for content existence and use a type assertion
+        // Add checks for content existence and use a type assertion
         expect(result.content).toBeDefined();
         expect(Array.isArray(result.content)).toBe(true);
         expect(result.content.length).toBe(1);
