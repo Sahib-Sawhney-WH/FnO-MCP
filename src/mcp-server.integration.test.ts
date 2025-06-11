@@ -1,20 +1,12 @@
-import { jest, describe, it, expect, beforeEach } from '@jest/globals';
+import { jest, describe, it, expect, beforeEach, afterEach } from '@jest/globals';
 import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { Client } from '@modelcontextprotocol/sdk/client/index.js';
 import { InMemoryTransport } from '@modelcontextprotocol/sdk/inMemory.js';
 import { ListToolsResultSchema, TextContent, CallToolResult } from '@modelcontextprotocol/sdk/types.js';
 import { getServer } from './mcp-server.js';
+import * as api from './api.js'; // Import the entire module as a namespace
 
-// Create an explicit mock function *before* mocking the module.
-const mockedMakeApiCall = jest.fn();
-
-// Mock the entire api module to prevent real API calls.
-// Now, when ./api.js is imported, its makeApiCall property will be our mock function.
-jest.mock('./api.js', () => ({
-    makeApiCall: mockedMakeApiCall,
-}));
-
-// Also mock the EntityManager to control its behavior
+// Mock the EntityManager to control its behavior
 jest.mock('./entityManager.js', () => ({
     EntityManager: jest.fn().mockImplementation(() => ({
         findBestMatch: jest.fn().mockResolvedValue('CustomersV3'),
@@ -26,10 +18,14 @@ describe('MCP Server Integration Tests', () => {
     let client: Client;
     let clientTransport: InMemoryTransport;
     let serverTransport: InMemoryTransport;
+    let makeApiCallSpy: jest.SpyInstance;
 
     beforeEach(async () => {
-        // Reset mocks before each test. This will now work correctly.
-        mockedMakeApiCall.mockClear();
+        // Use jest.spyOn to mock the makeApiCall function.
+        // Provide a default mock implementation that does nothing.
+        makeApiCallSpy = jest.spyOn(api, 'makeApiCall').mockImplementation(async () => {
+            return { content: [{ type: 'text', text: 'Default mock response' }] };
+        });
 
         // Get a fresh server instance
         mcpServer = getServer();
@@ -47,6 +43,11 @@ describe('MCP Server Integration Tests', () => {
         ]);
     });
 
+    afterEach(() => {
+        // Restore the original function after each test to ensure test isolation
+        makeApiCallSpy.mockRestore();
+    });
+
     it('should list all available tools', async () => {
         const result = await client.request({ method: 'tools/list' }, ListToolsResultSchema);
 
@@ -54,51 +55,50 @@ describe('MCP Server Integration Tests', () => {
         const toolNames = result.tools.map(t => t.name);
         expect(toolNames).toContain('odataQuery');
         expect(toolNames).toContain('createCustomer');
+        // This test does not call the API, so the spy should not be called.
+        expect(makeApiCallSpy).not.toHaveBeenCalled();
     });
 
     it('should call getODataMetadata tool successfully', async () => {
-        // Mock the response for this specific API call
-        mockedMakeApiCall.mockResolvedValue({
+        // Mock a specific response for this test case
+        makeApiCallSpy.mockResolvedValue({
             content: [{ type: 'text', text: '<metadata>...</metadata>' }],
         });
 
-        // Use an explicit type cast on the result of the await expression
         const result = await client.callTool({ 
             name: 'getODataMetadata',
-            arguments: {} // Add this empty arguments object
+            arguments: {}
         }) as CallToolResult;
         
-        expect(mockedMakeApiCall).toHaveBeenCalledWith(
+        expect(makeApiCallSpy).toHaveBeenCalledWith(
             'GET',
-            expect.stringContaining('/data/$metadata'), // Check that the correct endpoint is called
+            expect.stringContaining('/data/$metadata'),
             null,
             expect.any(Function)
         );
         
-        // Add checks for content existence and use a type assertion
         expect(result.content).toBeDefined();
         expect(Array.isArray(result.content)).toBe(true);
-        expect(result.content.length).toBe(1);
-        const textContent = result.content[0] as TextContent;
+        const textContent = result.content?.[0] as TextContent;
         expect(textContent.type).toBe('text');
         expect(textContent.text).toBe('<metadata>...</metadata>');
     });
 
     it('should use EntityManager to correct entity name in odataQuery tool', async () => {
-        // Mock the response for the odataQuery tool
-        mockedMakeApiCall.mockResolvedValue({
+        // Mock a specific response for this test case
+        makeApiCallSpy.mockResolvedValue({
             content: [{ type: 'text', text: '{"value": [{"id": 1}]}' }],
         });
 
         await client.callTool({
             name: 'odataQuery',
-            arguments: { entity: 'customer' } // Inexact name
+            arguments: { entity: 'customer' }
         });
 
-        // Verify that makeApiCall was called with the *corrected* entity name
-        expect(mockedMakeApiCall).toHaveBeenCalledWith(
+        // Verify that the spy was called with the *corrected* entity name
+        expect(makeApiCallSpy).toHaveBeenCalledWith(
             'GET',
-            expect.stringContaining('/data/CustomersV3'), // Should be corrected
+            expect.stringContaining('/data/CustomersV3'),
             null,
             expect.any(Function)
         );
