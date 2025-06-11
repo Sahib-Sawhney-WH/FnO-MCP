@@ -76,7 +76,7 @@ export class AuthManager {
             return this.tokenCache.accessToken;
         } catch (error) {
             console.error('Error during token fetch:', error);
-            throw new Error('Authentication failed.');
+            throw error;
         }
     }
 }

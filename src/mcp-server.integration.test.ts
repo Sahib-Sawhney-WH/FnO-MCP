@@ -62,8 +62,11 @@ describe('MCP Server Integration Tests', () => {
         });
 
         // Use an explicit type cast on the result of the await expression
-        const result = await client.callTool({ name: 'getODataMetadata' }) as CallToolResult;
-
+        const result = await client.callTool({ 
+            name: 'getODataMetadata',
+            arguments: {} // Add this empty arguments object
+        }) as CallToolResult;
+        
         expect(mockedApi.makeApiCall).toHaveBeenCalledWith(
             'GET',
             expect.stringContaining('/data/$metadata'), // Check that the correct endpoint is called
