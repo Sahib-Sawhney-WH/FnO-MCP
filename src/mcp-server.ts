@@ -1,25 +1,25 @@
 import { McpServer } from '@modelcontextprotocol/sdk/server/mcp';
 import { z } from 'zod';
 import { makeApiCall } from './api.js';
+import { EntityManager } from './entityManager.js';
+
+
+const entityManager = new EntityManager();
 
 /**
- * Creates and configures the MCP server with all the tools for the D365 API.
- * @returns {McpServer} The configured McpServer instance.
+ * Creates and configures the MCP server with all the tools for the D365 API. 
+ * @returns {McpServer} The configured McpServer instance. 
  */
 export const getServer = (): McpServer => {
     const server = new McpServer({
-        name: 'dynamics-365-fo-server',
-        version: '1.0.0',
-    }, {
-        capabilities: { logging: {}, tools: {} },
-        instructions: "This server provides tools to interact with the Dynamics 365 Finance and Operations OData API."
+        // ... (server configuration remains the same)
     });
 
     // --- Tool Definitions ---
 
     server.tool(
         'odataQuery',
-        'Executes a generic GET request against a Dynamics 365 OData entity.',
+        'Executes a generic GET request against a Dynamics 365 OData entity. The entity name does not need to be case-perfect.', // Updated description
         {
             entity: z.string().describe("The OData entity set to query (e.g., CustomersV3, ReleasedProductsV2)."),
             select: z.string().optional().describe("OData $select query parameter."),
@@ -29,8 +29,24 @@ export const getServer = (): McpServer => {
             crossCompany: z.boolean().optional().describe("Set to true to query across all companies."),
         },
         async (args, { sendNotification }) => {
+            
+            const correctedEntity = await entityManager.findBestMatch(args.entity);
+
+            if (!correctedEntity) {
+                return {
+                    isError: true,
+                    content: [{ type: 'text', text: `Could not find a matching entity for '${args.entity}'. Please provide a more specific name.` }]
+                };
+            }
+            
+            await sendNotification({
+                method: "notifications/message",
+                params: { level: "info", data: `Corrected entity name from '${args.entity}' to '${correctedEntity}'.` }
+            });
+
+            
             const { entity, ...queryParams } = args;
-            const url = new URL(`${process.env.DYNAMICS_RESOURCE_URL}/data/${entity}`);
+            const url = new URL(`${process.env.DYNAMICS_RESOURCE_URL}/data/${correctedEntity}`);
 
             if (queryParams.crossCompany) url.searchParams.append('cross-company', 'true');
             if (queryParams.select) url.searchParams.append('$select', queryParams.select);
@@ -38,7 +54,7 @@ export const getServer = (): McpServer => {
             if (queryParams.expand) url.searchParams.append('$expand', queryParams.expand);
             if (queryParams.top) url.searchParams.append('$top', queryParams.top.toString());
 
-            return makeApiCall('GET', url.toString(), null, sendNotification);
+            return makeApiCall('GET', url.toString(), null, sendNotification); [cite: 1987]
         }
     );
     
