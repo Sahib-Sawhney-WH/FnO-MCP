@@ -4,7 +4,7 @@ import { InMemoryTransport } from '@modelcontextprotocol/sdk/inMemory.js';
 // Added CallToolResult to the import for type assertion
 import { ListToolsResultSchema, TextContent, CallToolResult } from '@modelcontextprotocol/sdk/types.js';
 import { getServer } from './mcp-server.js';
-import * as api from './api.js';
+import { makeApiCall } from './api.js';
 import { jest, describe, it, expect, beforeEach } from '@jest/globals';
 import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { Client } from '@modelcontextprotocol/sdk/client/index.js';
@@ -21,7 +21,7 @@ jest.mock('./entityManager.js', () => ({
     })),
 }));
 
-const mockedApi = api as jest.Mocked<typeof api>;
+const mockedMakeApiCall = makeApiCall as jest.Mock;
 
 describe('MCP Server Integration Tests', () => {
     let mcpServer: McpServer;
@@ -31,7 +31,7 @@ describe('MCP Server Integration Tests', () => {
 
     beforeEach(async () => {
         // Reset mocks before each test
-        mockedApi.makeApiCall.mockClear();
+        mockedMakeApiCall.mockClear();
 
         // Get a fresh server instance
         mcpServer = getServer();
@@ -60,7 +60,7 @@ describe('MCP Server Integration Tests', () => {
 
     it('should call getODataMetadata tool successfully', async () => {
         // Mock the response for this specific API call
-        mockedApi.makeApiCall.mockResolvedValue({
+        mockedMakeApiCall.mockResolvedValue({
             content: [{ type: 'text', text: '<metadata>...</metadata>' }],
         });
 
@@ -70,7 +70,7 @@ describe('MCP Server Integration Tests', () => {
             arguments: {} // Add this empty arguments object
         }) as CallToolResult;
 
-        expect(mockedApi.makeApiCall).toHaveBeenCalledWith(
+        expect(mockedMakeApiCall).toHaveBeenCalledWith(
             'GET',
             expect.stringContaining('/data/$metadata'), // Check that the correct endpoint is called
             null,
