@@ -18,33 +18,55 @@ async function safeNotification(context: RequestHandlerExtra<ServerRequest, Serv
     }
 }
 
-// Define schemas for Zod validation to infer types from them later
+// Helper function to build the OData $filter string from an object
+function buildFilterString(filterObject?: Record<string, string>): string | null {
+    if (!filterObject || Object.keys(filterObject).length === 0) {
+        return null;
+    }
+    // Convert the object { key1: 'val1', key2: 'val2' } into an array of "key eq 'val'" strings
+    const filterClauses = Object.entries(filterObject).map(([key, value]) => {
+        // Simple quoting for OData string literals.
+        return `${key} eq '${value}'`;
+    });
+    // Join them with ' and '
+    return filterClauses.join(' and ');
+}
+
+
+// --- Zod Schemas for Tool Arguments ---
+
 const odataQuerySchema = z.object({
     entity: z.string().describe("The OData entity set to query (e.g., CustomersV3, ReleasedProductsV2)."),
     select: z.string().optional().describe("OData $select query parameter."),
-    filter: z.string().optional().describe("OData $filter query parameter."),
+    filter: z.record(z.string()).optional().describe("Key-value pairs for filtering. e.g., { ProductNumber: 'D0001', dataAreaId: 'usmf' }. Automatically joined with 'and'."),
     expand: z.string().optional().describe("OData $expand query parameter."),
     top: z.number().optional().describe("OData $top query parameter."),
     crossCompany: z.boolean().optional().describe("Set to true to query across all companies."),
 });
+
 const createCustomerSchema = z.object({
     customerData: z.record(z.unknown()).describe("A JSON object for the new customer. Must include dataAreaId, CustomerAccount, etc."),
 });
+
 const updateCustomerSchema = z.object({
     dataAreaId: z.string().describe("The dataAreaId of the customer (e.g., 'usmf')."),
     customerAccount: z.string().describe("The customer account ID to update (e.g., 'PM-001')."),
     updateData: z.record(z.unknown()).describe("A JSON object with the fields to update."),
 });
+
 const getEntityCountSchema = z.object({
     entity: z.string().describe("The OData entity set to count (e.g., CustomersV3)."),
     crossCompany: z.boolean().optional().describe("Set to true to count across all companies."),
 });
+
 const createSystemUserSchema = z.object({
      userData: z.record(z.unknown()).describe("A JSON object for the new system user. Must include UserID, Alias, Company, etc."),
 });
+
 const assignUserRoleSchema = z.object({
     associationData: z.record(z.unknown()).describe("JSON object for the role association. Must include UserId and SecurityRoleIdentifier."),
 });
+
 const updatePositionHierarchySchema = z.object({
     positionId: z.string().describe("The ID of the position to update."),
     hierarchyTypeName: z.string().describe("The hierarchy type name (e.g., 'Line')."),
@@ -52,6 +74,7 @@ const updatePositionHierarchySchema = z.object({
     validTo: z.string().datetime().describe("The end validity date in ISO 8601 format."),
     updateData: z.record(z.unknown()).describe("A JSON object with the fields to update (e.g., ParentPositionId)."),
 });
+
 
 /**
  * Creates and configures the MCP server with all the tools for the D365 API.
@@ -80,17 +103,31 @@ export const getServer = (): McpServer => {
                 };
             }
             
+            const effectiveArgs = { ...args };
+
+            // If the filter contains 'dataAreaId', automatically enable cross-company search
+            if (effectiveArgs.filter?.dataAreaId && effectiveArgs.crossCompany !== false) {
+                if (!effectiveArgs.crossCompany) {
+                    await safeNotification(context, {
+                        method: "notifications/message",
+                        params: { level: "info", data: `Filter on company ('dataAreaId') detected. Automatically enabling cross-company search.` }
+                    });
+                }
+                effectiveArgs.crossCompany = true;
+            }
+
             await safeNotification(context, {
                 method: "notifications/message",
                 params: { level: "info", data: `Corrected entity name from '${args.entity}' to '${correctedEntity}'.` }
             });
             
-            const { entity, ...queryParams } = args;
+            const { entity, ...queryParams } = effectiveArgs;
+            const filterString = buildFilterString(queryParams.filter);
             const url = new URL(`${process.env.DYNAMICS_RESOURCE_URL}/data/${correctedEntity}`);
 
             if (queryParams.crossCompany) url.searchParams.append('cross-company', 'true');
             if (queryParams.select) url.searchParams.append('$select', queryParams.select);
-            if (queryParams.filter) url.searchParams.append('$filter', queryParams.filter);
+            if (filterString) url.searchParams.append('$filter', filterString);
             if (queryParams.expand) url.searchParams.append('$expand', queryParams.expand);
             if (queryParams.top) url.searchParams.append('$top', queryParams.top.toString());
 
