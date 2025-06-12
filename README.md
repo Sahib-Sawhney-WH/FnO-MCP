@@ -1,6 +1,6 @@
 # Dynamics 365 Finance & Operations MCP Server
 
-This project is a TypeScript-based server that implements the [Model Context Protocol (MCP)](https://modelcontextprotocol.io) to provide a secure and efficient gateway to the Dynamics 365 Finance & Operations (F&O) OData API. It exposes various D365 F&O data entities and actions as a set of tools that can be consumed by Large Language Models (LLMs) or other MCP-compatible clients.
+This project is a TypeScript-based server that implements the [Model Context Protocol (MCP)](https://modelcontextprotocol.io) to provide a secure and efficient gateway to the Dynamics 365 Finance & Operations (F&O) OData API. It exposes various D365 F&O data entities and actions as a set of tools that can be consumed by Large Language Models (LLMs), Microsoft Copilot Studio, or other MCP-compatible clients.
 
 The server handles authentication with Azure AD, including caching the bearer token to optimize performance by avoiding re-authentication on every API call.
 
@@ -8,8 +8,8 @@ The server handles authentication with Azure AD, including caching the bearer to
 
 -   **MCP Compliant:** Built using the official `@modelcontextprotocol/sdk`.
 -   **Authenticated:** Securely connects to the D365 F&O OData API using the OAuth 2.0 client credentials flow.
--   **Efficient:** Automatically caches the authentication token and refreshes it only when it's about to expire. It also caches the OData entity list to provide fast and fuzzy matching on entity names.
--   **User-Friendly:** The `odataQuery` tool uses a string-similarity algorithm to find the correct entity, even if the user's input has the wrong case or is slightly misspelled.
+-   **Efficient:** Automatically caches the authentication token and refreshes it only when it's about to expire. It also caches the OData entity list for fast lookups.
+-   **User-Friendly:** The `odataQuery` tool uses a fuzzy-matching algorithm (`fuse.js`) to find the correct entity, even if the user's input has the wrong case or is slightly misspelled.
 -   **Well-Structured:** The project is organized by concern, separating the Express server, MCP tool definitions, API communication layer, and authentication logic.
 -   **Tested:** Includes a testing suite with Jest for unit and integration tests to ensure reliability and maintainability.
 -   **Extensible:** Easily add new tools to expose more D365 F&O entities or actions.
@@ -140,7 +140,7 @@ This MCP server exposes the following tools. An MCP client can call these to int
 
 | Tool Name                       | Description                                                                                                | Arguments                                                                                                           |
 | :------------------------------ | :--------------------------------------------------------------------------------------------------------- | :------------------------------------------------------------------------------------------------------------------ |
-| `odataQuery`                    | Executes a generic GET request against any D365 OData entity. The entity name does not need to be case-perfect. | `entity`, `select` (opt), `filter` (opt), `expand` (opt), `top` (opt), `crossCompany` (opt)                           |
+| `odataQuery`                    | Executes a generic GET request against any D365 OData entity. The entity name does not need to be case-perfect. It also smartly enables cross-company search if `dataAreaId` is part of the filter. | `entity`, `select` (opt), `filter` (opt), `expand` (opt), `top` (opt), `crossCompany` (opt)                           |
 | `getEntityCount`                | Gets the total count of records for a given entity.                                                        | `entity`, `crossCompany` (opt)                                                                                      |
 | `getODataMetadata`              | Retrieves the OData $metadata document for the service.                                                    | _None_                                                                                                              |
 | `createCustomer`                | Creates a new customer record in the `CustomersV3` entity.                                                 | `customerData` (JSON object)                                                                                        |
@@ -189,6 +189,14 @@ server.tool(
 
 ---
 
+## Security Considerations
+
+-   **Secrets Management**: The `.env` file contains sensitive credentials (`CLIENT_ID`, `CLIENT_SECRET`, etc.). This file should **never** be committed to source control. Ensure your `.gitignore` file includes `.env`.
+-   **Azure Deployment**: When deploying to Azure, use the **Configuration > Application settings** panel to store your secrets. These are securely injected as environment variables at runtime and are not stored in your code repository.
+-   **Network Security**: For production environments, consider placing the Azure Web App behind a firewall or in a Virtual Network (VNet) and using private endpoints to restrict access.
+
+---
+
 ## Deploying to Azure
 
 You can deploy this application directly to an Azure Web App service. The repository includes a sample GitHub Actions workflow file at `.github/workflows/main_fno-mcp.yml` that can be adapted for your deployment pipeline.
@@ -202,13 +210,13 @@ First, you need to create the Web App resource in the Azure Portal.
 3.  Fill out the **Basics** tab with the following settings:
     -   **Subscription:** Choose your Azure subscription.
     -   **Resource Group:** Create a new one or select an existing one.
-    -   **Name:** Give your app a globally unique name (e.g., `fno-mcp-server-yourname`).
+    -   **Name:** Give your app a globally unique name (e.g., `fno-mcp-server-yourname`). This name will form part of your URL.
     -   **Publish:** Select **Code**.
     -   **Runtime stack:** Select **Node 22 LTS**.
     -   **Operating System:** Select **Linux**.
     -   **Region:** Choose a region close to you.
 4.  Configure the **App Service Plan** based on your needs (a Free F1 tier is sufficient for testing).
-5.  Click **Review + create**, then **Create** to provision the resource.
+5.  Click **Review + create**, then **Create** to provision the resource. **Make a note of the default URL** (e.g., `https://fno-mcp-server-yourname.azurewebsites.net`).
 
 ### Step 2: Configure GitHub Deployment
 
@@ -224,7 +232,7 @@ Once the Web App is created, configure it to automatically deploy from your GitH
     -   **Branch:** Select `main`.
 6.  Azure will detect the Node.js project and suggest a workflow. Review the settings and click **Save**. This will commit a workflow file to your repository in the `.github/workflows/` directory. Any subsequent pushes to your `main` branch will automatically trigger a new deployment to your Azure Web App.
 
-### Step 3: Configure Environment Variables
+### Step 3: Configure Environment Variables in Azure
 
 Your deployed application needs access to the same secrets as your local environment.
 
@@ -247,3 +255,66 @@ This MCP server is **stateful**. It maintains an in-memory `transports` object t
 4.  Click **Save**.
 
 With these steps completed, your server will be running on Azure and will automatically update whenever you push changes to your `main` branch.
+
+---
+
+## Integrating with Microsoft Copilot Studio
+
+Once your MCP server is deployed, you can register it as a **Custom Connector** to make its tools available to your copilot. This process is started in Copilot Studio and completed in Power Apps.
+
+The process uses an **OpenAPI specification** file to describe your server's API.
+
+### 1. Create the OpenAPI Definition File
+
+First, create an OpenAPI (Swagger) definition that describes your server's single `/mcp` endpoint. The key property `x-ms-agentic-protocol: mcp-streamable-1.0` tells the platform that this endpoint speaks the Model Context Protocol.
+
+Save the following YAML code as a file named `swagger.yaml` on your local machine.
+
+**IMPORTANT:** You must replace the `host` value with the URL of your deployed Azure Web App.
+
+```yaml
+swagger: '2.0'
+info:
+  title: 'Dynamics 365 F&O MCP Server'
+  description: 'Connects to a server that implements the Model Context Protocol (MCP) to provide a secure and efficient gateway to the Dynamics 365 Finance & Operations (F&O) OData API.'
+  version: '1.0.0'
+host: 'your-app-name.azurewebsites.net' # <-- IMPORTANT: REPLACE THIS
+basePath: /
+schemes:
+  - https
+paths:
+  /mcp:
+    post:
+      summary: 'Invoke D365 F&O MCP Server'
+      description: 'The single endpoint for all MCP communications.'
+      x-ms-agentic-protocol: mcp-streamable-1.0
+      operationId: 'InvokeMcpServer'
+      consumes:
+      - application/json
+      produces:
+      - application/json
+      responses:
+        '200':
+          description: 'Successful MCP response.'
+          schema:
+            type: object
+        default:
+          description: 'Error response.'
+          schema:
+            type: object
+```
+
+### 2. Create the Custom Connector
+
+1.  Navigate to your copilot in [Microsoft Copilot Studio](https://copilotstudio.microsoft.com/).
+2.  Select **Topics & Plugins** in the left navigation.
+3.  Select **+ Add a plugin**.
+4.  Select **Add a custom connector**. You will be taken to the Power Apps portal to create the connector.
+5.  On the Custom Connectors page in Power Apps, select **+ New custom connector**.
+6.  From the dropdown, select **Import an OpenAPI file**.
+7.  Provide a name for your connector (e.g., "D365 F&O MCP Connector").
+8.  Click the **Import** button and select the `swagger.yaml` file you created in the previous step.
+9.  Click **Continue**.
+10. Review the imported settings (General, Security, Definition) and click **Create connector**.
+
+Once the connector is saved, return to Copilot Studio. It will now be available as a tool you can enable for your copilot, allowing it to use the tools from your MCP server.
