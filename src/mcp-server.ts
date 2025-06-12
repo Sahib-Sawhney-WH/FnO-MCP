@@ -1,19 +1,21 @@
+// src/mcp-server.ts
+
 import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { z } from 'zod';
 import { makeApiCall } from './api.js';
 import { EntityManager } from './entityManager.js';
-// Corrected the import path for SDK types
 import { RequestHandlerExtra } from '@modelcontextprotocol/sdk/shared/protocol.js';
 import { ServerRequest, ServerNotification } from '@modelcontextprotocol/sdk/types.js';
 
 const entityManager = new EntityManager();
+// PAGINATION: Define a default page size to prevent oversized payloads.
+const DEFAULT_PAGE_SIZE = 5;
 
 // Helper function to safely send notifications
 async function safeNotification(context: RequestHandlerExtra<ServerRequest, ServerNotification>, notification: any): Promise<void> {
     try {
         await context.sendNotification(notification);
     } catch (error) {
-        // Silently ignore notification errors (e.g., in test environments)
         console.log('Notification failed (this is normal in test environments):', error);
     }
 }
@@ -23,12 +25,9 @@ function buildFilterString(filterObject?: Record<string, string>): string | null
     if (!filterObject || Object.keys(filterObject).length === 0) {
         return null;
     }
-    // Convert the object { key1: 'val1', key2: 'val2' } into an array of "key eq 'val'" strings
     const filterClauses = Object.entries(filterObject).map(([key, value]) => {
-        // Simple quoting for OData string literals.
         return `${key} eq '${value}'`;
     });
-    // Join them with ' and '
     return filterClauses.join(' and ');
 }
 
@@ -37,10 +36,13 @@ function buildFilterString(filterObject?: Record<string, string>): string | null
 
 const odataQuerySchema = z.object({
     entity: z.string().describe("The OData entity set to query (e.g., CustomersV3, ReleasedProductsV2)."),
-    select: z.string().optional().describe("OData $select query parameter."),
-    filter: z.record(z.string()).optional().describe("Key-value pairs for filtering. e.g., { ProductNumber: 'D0001', dataAreaId: 'usmf' }. Automatically joined with 'and'."),
+    select: z.string().optional().describe("OData $select query parameter to limit the fields returned."),
+    filter: z.record(z.string()).optional().describe("Key-value pairs for filtering. e.g., { ProductNumber: 'D0001', dataAreaId: 'usmf' }."),
     expand: z.string().optional().describe("OData $expand query parameter."),
-    top: z.number().optional().describe("OData $top query parameter."),
+    // PAGINATION: Updated description for 'top' to explain its role in pagination.
+    top: z.number().optional().describe(`The number of records to return per page. Defaults to ${DEFAULT_PAGE_SIZE}.`),
+    // PAGINATION: Added 'skip' parameter for fetching subsequent pages.
+    skip: z.number().optional().describe("The number of records to skip. Used for pagination to get the next set of results."),
     crossCompany: z.boolean().optional().describe("Set to true to query across all companies."),
 });
 
@@ -90,7 +92,7 @@ export const getServer = (): McpServer => {
 
     server.tool(
         'odataQuery',
-        'Executes a generic GET request against a Dynamics 365 OData entity. The entity name does not need to be case-perfect.',
+        'Executes a generic GET request against a Dynamics 365 OData entity. The entity name does not need to be case-perfect. Responses are paginated.',
         odataQuerySchema.shape,
         async (args: z.infer<typeof odataQuerySchema>, context: RequestHandlerExtra<ServerRequest, ServerNotification>) => {
             
@@ -105,7 +107,6 @@ export const getServer = (): McpServer => {
             
             const effectiveArgs = { ...args };
 
-            // If the filter contains 'dataAreaId', automatically enable cross-company search
             if (effectiveArgs.filter?.dataAreaId && effectiveArgs.crossCompany !== false) {
                 if (!effectiveArgs.crossCompany) {
                     await safeNotification(context, {
@@ -125,12 +126,19 @@ export const getServer = (): McpServer => {
             const filterString = buildFilterString(queryParams.filter);
             const url = new URL(`${process.env.DYNAMICS_RESOURCE_URL}/data/${correctedEntity}`);
 
+            // PAGINATION: Apply query parameters including the new skip and a default top.
+            const topValue = queryParams.top || DEFAULT_PAGE_SIZE;
+            url.searchParams.append('$top', topValue.toString());
+
+            if (queryParams.skip) {
+                url.searchParams.append('$skip', queryParams.skip.toString());
+            }
+
             if (queryParams.crossCompany) url.searchParams.append('cross-company', 'true');
             if (queryParams.select) url.searchParams.append('$select', queryParams.select);
             if (filterString) url.searchParams.append('$filter', filterString);
             if (queryParams.expand) url.searchParams.append('$expand', queryParams.expand);
-            if (queryParams.top) url.searchParams.append('$top', queryParams.top.toString());
-
+            
             return makeApiCall('GET', url.toString(), null, async (notification) => {
                 await safeNotification(context, notification);
             });
