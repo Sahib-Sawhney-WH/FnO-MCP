@@ -68,25 +68,9 @@ export class EntityManager {
             console.log('Schema cache is empty. Fetching and parsing $metadata for the first time...');
             this.schemaCache = await this.fetchAndParseMetadata();
         }
-
-        if (!this.schemaCache) return null;
-
-        // --- MODIFIED: Make lookup plural-insensitive ---
-        // First, try the exact name given (e.g., 'PurchaseOrderHeadersV2')
-        let schema = this.schemaCache[entityName];
-        if (schema) return schema;
-
-        // If not found and the name ends with 's', try the singular version
-        if (entityName.endsWith('s')) {
-            const singularName = entityName.slice(0, -1);
-            console.log(`Could not find schema for '${entityName}', trying singular form '${singularName}'...`);
-            schema = this.schemaCache[singularName];
-            if (schema) return schema;
-        }
         
-        // --- End of Modification ---
-
-        return null;
+        // Return the schema if it exists, otherwise null.
+        return this.schemaCache?.[entityName] || null;
     }
 
     /**
@@ -166,7 +150,8 @@ export class EntityManager {
                 }
                 schema[entityName] = { name: entityName, fields };
             }
-            console.log(`Successfully parsed metadata for ${Object.keys(schema).length} entities.`);
+            // --- NEW: Add detailed logging to see all available schema keys ---
+            console.log(`Successfully parsed metadata. Available schema keys:`, Object.keys(schema));
             return schema;
         } catch (error) {
             console.error("Error fetching or parsing $metadata:", error);
