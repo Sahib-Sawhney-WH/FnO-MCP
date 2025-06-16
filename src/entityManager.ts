@@ -27,7 +27,10 @@ interface EntitySchema {
  */
 export class EntityManager {
     private entityCache: ODataEntity[] | null = null;
+    // MODIFIED: Caches schemas by their full type name, e.g., 'Microsoft.Dynamics.DataEntities.PurchaseOrderHeaderV2'
     private schemaCache: Record<string, EntitySchema> | null = null;
+    // NEW: A map to link the entity set name to its type name.
+    private entitySetToTypeMap: Record<string, string> | null = null;
     private authManager = new AuthManager();
     private fuse: Fuse<ODataEntity> | null = null;
 
@@ -60,24 +63,31 @@ export class EntityManager {
 
     /**
      * Retrieves the parsed schema for a specific entity.
-     * @param entityName The official name of the entity (e.g., 'PurchaseOrderHeadersV2').
+     * @param entitySetName The public name of the entity set (e.g., 'PurchaseOrderHeadersV2').
      * @returns The parsed schema object, or null if not found.
      */
-    public async getEntitySchema(entityName: string): Promise<EntitySchema | null> {
-        if (!this.schemaCache) {
-            console.log('Schema cache is empty. Fetching and parsing $metadata for the first time...');
-            this.schemaCache = await this.fetchAndParseMetadata();
+    public async getEntitySchema(entitySetName: string): Promise<EntitySchema | null> {
+        // If caches are empty, populate them by parsing the metadata.
+        if (!this.schemaCache || !this.entitySetToTypeMap) {
+            console.log('Caches are empty. Fetching and parsing $metadata for the first time...');
+            const { schemaCache, entitySetToTypeMap } = await this.fetchAndParseMetadata();
+            this.schemaCache = schemaCache;
+            this.entitySetToTypeMap = entitySetToTypeMap;
         }
         
-        const schema = this.schemaCache?.[entityName];
-        if (schema) return schema;
-
-        if (entityName.endsWith('s')) {
-            const singularName = entityName.slice(0, -1);
-            return this.schemaCache?.[singularName] || null;
+        if (!this.entitySetToTypeMap || !this.schemaCache) {
+            return null;
+        }
+        
+        // Step 1: Use the map to find the full entity type name.
+        const entityTypeName = this.entitySetToTypeMap[entitySetName];
+        if (!entityTypeName) {
+            console.error(`Could not find a type mapping for entity set '${entitySetName}'.`);
+            return null;
         }
 
-        return null;
+        // Step 2: Use the full type name to get the schema from the cache.
+        return this.schemaCache[entityTypeName] || null;
     }
 
     /**
@@ -91,10 +101,7 @@ export class EntityManager {
         try {
             const response = await fetch(url, {
                 method: 'GET',
-                headers: {
-                    'Authorization': `Bearer ${token}`,
-                    'Accept': 'application/json',
-                },
+                headers: { 'Authorization': `Bearer ${token}`, 'Accept': 'application/json' },
             });
             if (!response.ok) {
                 throw new Error(`Failed to fetch entity list: ${response.statusText}`);
@@ -112,13 +119,15 @@ export class EntityManager {
     }
     
     /**
-     * Fetches the full OData $metadata, parses it, and caches it.
-     * @returns A record of entity schemas, keyed by entity name.
+     * Fetches the full OData $metadata, parses it, and builds caches.
+     * @returns An object containing the schema cache and the entity set map.
      */
-    private async fetchAndParseMetadata(): Promise<Record<string, EntitySchema>> {
+    private async fetchAndParseMetadata(): Promise<{ schemaCache: Record<string, EntitySchema>, entitySetToTypeMap: Record<string, string> }> {
         const token = await this.authManager.getAuthToken();
         const url = `${process.env.DYNAMICS_RESOURCE_URL}/data/$metadata`;
         console.log(`Fetching full metadata from ${url}`);
+
+        const emptyResult = { schemaCache: {}, entitySetToTypeMap: {} };
 
         try {
             const response = await fetch(url, {
@@ -137,50 +146,60 @@ export class EntityManager {
             });
             const jsonObj = parser.parse(xmlData);
 
-            const finalSchemaMap: Record<string, EntitySchema> = {};
+            const schemaCache: Record<string, EntitySchema> = {};
+            const entitySetToTypeMap: Record<string, string> = {};
             const dataServices = jsonObj['edmx:Edmx']?.['edmx:DataServices'];
             
             if (!dataServices || !dataServices.Schema) {
                 console.error("Could not find 'DataServices.Schema' in the parsed metadata object.");
-                return {};
+                return emptyResult;
             }
 
             const schemas = Array.isArray(dataServices.Schema) ? dataServices.Schema : [dataServices.Schema];
 
             for (const schema of schemas) {
-                if (!schema.EntityType) continue; 
+                const schemaNamespace = schema['@_Namespace'];
 
-                const entityTypes = Array.isArray(schema.EntityType) ? schema.EntityType : [schema.EntityType];
+                // --- Process Entity Types ---
+                if (schema.EntityType) {
+                    const entityTypes = Array.isArray(schema.EntityType) ? schema.EntityType : [schema.EntityType];
+                    for (const entity of entityTypes) {
+                        const entityName = entity['@_Name'];
+                        const fullTypeName = `${schemaNamespace}.${entityName}`;
+                        const fields: { name: string; type: string; isKey: boolean; }[] = [];
+                        
+                        const rawPropertyRefs = entity.Key?.PropertyRef;
+                        const keys = rawPropertyRefs ? (Array.isArray(rawPropertyRefs) ? rawPropertyRefs : [rawPropertyRefs]).map((pr: any) => pr['@_Name']) : [];
+                        const properties = entity.Property ? (Array.isArray(entity.Property) ? entity.Property : [entity.Property]) : [];
 
-                for (const entity of entityTypes) {
-                    const entityName = entity['@_Name'];
-                    const fields: { name: string; type: string; isKey: boolean; }[] = [];
-                    
-                    // --- MODIFIED: Handle cases where there is only one Primary Key field ---
-                    const rawPropertyRefs = entity.Key?.PropertyRef;
-                    const keys = rawPropertyRefs 
-                        ? (Array.isArray(rawPropertyRefs) ? rawPropertyRefs : [rawPropertyRefs]).map((pr: any) => pr['@_Name']) 
-                        : [];
-                    
-                    const properties = entity.Property ? (Array.isArray(entity.Property) ? entity.Property : [entity.Property]) : [];
-
-                    for (const prop of properties) {
-                        fields.push({
-                            name: prop['@_Name'],
-                            type: prop['@_Type'],
-                            isKey: keys.includes(prop['@_Name'])
-                        });
+                        for (const prop of properties) {
+                            fields.push({
+                                name: prop['@_Name'],
+                                type: prop['@_Type'],
+                                isKey: keys.includes(prop['@_Name'])
+                            });
+                        }
+                        schemaCache[fullTypeName] = { name: entityName, fields };
                     }
-                    finalSchemaMap[entityName] = { name: entityName, fields };
+                }
+                
+                // --- Process the Entity Container to build the map ---
+                if (schema.EntityContainer) {
+                    const entitySets = Array.isArray(schema.EntityContainer.EntitySet) ? schema.EntityContainer.EntitySet : [schema.EntityContainer.EntitySet];
+                    for (const entitySet of entitySets) {
+                        const setName = entitySet['@_Name'];
+                        const typeName = entitySet['@_EntityType'];
+                        entitySetToTypeMap[setName] = typeName;
+                    }
                 }
             }
 
-            console.log(`Successfully parsed metadata. Available schema keys:`, Object.keys(finalSchemaMap).length);
-            return finalSchemaMap;
+            console.log(`Successfully parsed metadata. Found ${Object.keys(schemaCache).length} schema types and ${Object.keys(entitySetToTypeMap).length} entity sets.`);
+            return { schemaCache, entitySetToTypeMap };
 
         } catch (error) {
             console.error("Error fetching or parsing $metadata:", error);
-            return {};
+            return emptyResult;
         }
     }
 }
