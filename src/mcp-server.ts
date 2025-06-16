@@ -10,7 +10,6 @@ import { ServerRequest, ServerNotification } from '@modelcontextprotocol/sdk/typ
 const entityManager = new EntityManager();
 const DEFAULT_PAGE_SIZE = 5;
 
-// (Helper functions and Zod schemas are unchanged)
 async function safeNotification(context: RequestHandlerExtra<ServerRequest, ServerNotification>, notification: any): Promise<void> {
     try {
         await context.sendNotification(notification);
@@ -84,7 +83,6 @@ const updatePositionHierarchySchema = z.object({
     updateData: z.record(z.unknown()).describe("A JSON object with the fields to update (e.g., ParentPositionId)."),
 });
 
-
 /**
  * Creates and configures the MCP server with all the tools for the D365 API.
  */
@@ -93,6 +91,8 @@ export const getServer = (): McpServer => {
         name: 'd365-fno-mcp-server',
         version: '1.0.0',
     });
+
+    // --- Tool Definitions ---
 
     server.tool(
         'odataQuery',
@@ -108,7 +108,6 @@ export const getServer = (): McpServer => {
 
             const entitySchema = await entityManager.getEntitySchema(correctedEntity);
             
-            // --- MODIFIED: Improved error message ---
             if (!entitySchema) {
                 const errorMsg = `Could not find a schema for entity '${correctedEntity}'. This can happen if the entity set name differs from its type name. Please check the server logs for a list of all available schema keys that were successfully parsed.`;
                 return { isError: true, content: [{ type: 'text', text: errorMsg }] };
@@ -164,6 +163,105 @@ export const getServer = (): McpServer => {
         }
     );
 
-    // ... (rest of the tools are unchanged)
+    // --- All other tools must be defined BEFORE the final return statement ---
+
+    server.tool(
+        'createCustomer',
+        'Creates a new customer record in CustomersV3.',
+        createCustomerSchema.shape,
+        async ({ customerData }: z.infer<typeof createCustomerSchema>, context: RequestHandlerExtra<ServerRequest, ServerNotification>) => {
+            const url = `${process.env.DYNAMICS_RESOURCE_URL}/data/CustomersV3`;
+            return makeApiCall('POST', url, customerData as Record<string, unknown>, async (notification) => {
+                await safeNotification(context, notification);
+            });
+        }
+    );
+
+    server.tool(
+        'updateCustomer',
+        'Updates an existing customer record in CustomersV3 using a PATCH request.',
+        updateCustomerSchema.shape,
+        async ({ dataAreaId, customerAccount, updateData }: z.infer<typeof updateCustomerSchema>, context: RequestHandlerExtra<ServerRequest, ServerNotification>) => {
+            const url = `${process.env.DYNAMICS_RESOURCE_URL}/data/CustomersV3(dataAreaId='${dataAreaId}',CustomerAccount='${customerAccount}')`;
+            return makeApiCall('PATCH', url, updateData as Record<string, unknown>, async (notification) => {
+                await safeNotification(context, notification);
+            });
+        }
+    );
+
+    server.tool(
+        'getEntityCount',
+        'Gets the total count of records for a given OData entity.',
+        getEntityCountSchema.shape,
+        async ({ entity, crossCompany }: z.infer<typeof getEntityCountSchema>, context: RequestHandlerExtra<ServerRequest, ServerNotification>) => {
+             const url = new URL(`${process.env.DYNAMICS_RESOURCE_URL}/data/${entity}/$count`);
+             if (crossCompany) url.searchParams.append('cross-company', 'true');
+             return makeApiCall('GET', url.toString(), null, async (notification) => {
+                await safeNotification(context, notification);
+            });
+        }
+    );
+
+    server.tool(
+        'createSystemUser',
+        'Creates a new user in SystemUsers.',
+        createSystemUserSchema.shape,
+        async ({ userData }: z.infer<typeof createSystemUserSchema>, context: RequestHandlerExtra<ServerRequest, ServerNotification>) => {
+            const url = `${process.env.DYNAMICS_RESOURCE_URL}/data/SystemUsers`;
+            return makeApiCall('POST', url, userData as Record<string, unknown>, async (notification) => {
+                await safeNotification(context, notification);
+            });
+        }
+    );
+
+    server.tool(
+        'assignUserRole',
+        'Assigns a security role to a user in SecurityUserRoleAssociations.',
+        assignUserRoleSchema.shape,
+        async ({ associationData }: z.infer<typeof assignUserRoleSchema>, context: RequestHandlerExtra<ServerRequest, ServerNotification>) => {
+            const url = `${process.env.DYNAMICS_RESOURCE_URL}/data/SecurityUserRoleAssociations`;
+            return makeApiCall('POST', url, associationData as Record<string, unknown>, async (notification) => {
+                await safeNotification(context, notification);
+            });
+        }
+    );
+
+    server.tool(
+        'updatePositionHierarchy',
+        'Updates a position in PositionHierarchies.',
+        updatePositionHierarchySchema.shape,
+        async ({ positionId, hierarchyTypeName, validFrom, validTo, updateData }: z.infer<typeof updatePositionHierarchySchema>, context: RequestHandlerExtra<ServerRequest, ServerNotification>) => {
+            const url = `${process.env.DYNAMICS_RESOURCE_URL}/data/PositionHierarchies(PositionId='${positionId}',HierarchyTypeName='${hierarchyTypeName}',ValidFrom=${validFrom},ValidTo=${validTo})`;
+            return makeApiCall('PATCH', url, updateData as Record<string, unknown>, async (notification) => {
+                await safeNotification(context, notification);
+            });
+        }
+    );
+
+    server.tool(
+        'action_initializeDataManagement',
+        'Executes the InitializeDataManagement action on the DataManagementDefinitionGroups entity.',
+        z.object({}).shape,
+        async (_args: {}, context: RequestHandlerExtra<ServerRequest, ServerNotification>) => {
+            const url = `${process.env.DYNAMICS_RESOURCE_URL}/data/DataManagementDefinitionGroups/Microsoft.Dynamics.DataEntities.InitializeDataManagement`;
+            return makeApiCall('POST', url, {}, async (notification) => {
+                await safeNotification(context, notification);
+            });
+        }
+    );
+
+    server.tool(
+        'getODataMetadata',
+        'Retrieves the OData $metadata document for the service.',
+        z.object({}).shape,
+        async (_args: {}, context: RequestHandlerExtra<ServerRequest, ServerNotification>) => {
+             const url = `${process.env.DYNAMICS_RESOURCE_URL}/data/$metadata`;
+             return makeApiCall('GET', url.toString(), null, async (notification) => {
+                await safeNotification(context, notification);
+            });
+        }
+    );
+
+    // The final return must be at the end of the function.
     return server;
 };
