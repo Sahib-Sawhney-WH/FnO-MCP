@@ -1,3 +1,5 @@
+// src/mcp-server.integration.test.ts
+
 import { jest, describe, it, expect, beforeEach, afterEach } from '@jest/globals';
 import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { Client } from '@modelcontextprotocol/sdk/client/index.js';
@@ -7,15 +9,21 @@ import { ListToolsResultSchema, TextContent, CallToolResult } from '@modelcontex
 // Create mock functions
 const mockMakeApiCall = jest.fn();
 const mockFindBestMatch = jest.fn();
+// --- NEW: Add a mock for the new getEntitySchema function ---
+const mockGetEntitySchema = jest.fn();
+
 
 // Mock modules BEFORE importing the module that uses them
 jest.unstable_mockModule('./api.js', () => ({
     makeApiCall: mockMakeApiCall
 }));
 
+// --- MODIFIED: Update the EntityManager mock ---
 jest.unstable_mockModule('./entityManager.js', () => ({
     EntityManager: jest.fn().mockImplementation(() => ({
-        findBestMatch: mockFindBestMatch
+        findBestMatch: mockFindBestMatch,
+        // Add the new mock function here
+        getEntitySchema: mockGetEntitySchema
     }))
 }));
 
@@ -33,15 +41,24 @@ describe('MCP Server Integration Tests', () => {
     beforeEach(async () => {
         // Set up required environment variables
         process.env.DYNAMICS_RESOURCE_URL = 'https://test.dynamics.com';
-        
+
         // Clear all mocks
         jest.clearAllMocks();
-        
+
         // Reset mock implementations
         mockFindBestMatch.mockResolvedValue('CustomersV3');
         mockMakeApiCall.mockResolvedValue({
             content: [{ type: 'text', text: '{"value": []}' }]
         });
+        // --- NEW: Provide a default mock schema for tests ---
+        mockGetEntitySchema.mockResolvedValue({
+            name: 'CustomersV3',
+            fields: [
+                { name: 'dataAreaId', type: 'Edm.String' },
+                { name: 'CustomerAccount', type: 'Edm.String' }
+            ]
+        });
+
 
         // Get a fresh server instance
         mcpServer = getServer();
@@ -80,18 +97,18 @@ describe('MCP Server Integration Tests', () => {
             content: [{ type: 'text', text: '<metadata>...</metadata>' }],
         });
 
-        const result = await client.callTool({ 
+        const result = await client.callTool({
             name: 'getODataMetadata',
             arguments: {}
         }) as CallToolResult;
-        
+
         expect(mockMakeApiCall).toHaveBeenCalledWith(
             'GET',
             expect.stringContaining('/data/$metadata'),
             null,
             expect.any(Function)
         );
-        
+
         expect(result.content).toBeDefined();
         const textContent = result.content?.[0] as TextContent;
         expect(textContent.type).toBe('text');
@@ -111,7 +128,10 @@ describe('MCP Server Integration Tests', () => {
 
         // Verify EntityManager was called
         expect(mockFindBestMatch).toHaveBeenCalledWith('customer');
-        
+        // --- NEW: Verify the new function was called ---
+        expect(mockGetEntitySchema).toHaveBeenCalledWith('CustomersV3');
+
+
         // Verify the mock was called correctly
         expect(mockMakeApiCall).toHaveBeenCalledWith(
             'GET',
@@ -119,7 +139,7 @@ describe('MCP Server Integration Tests', () => {
             null,
             expect.any(Function)
         );
-        
+
         // Verify the result
         expect(result.content).toBeDefined();
         const textContent = result.content?.[0] as TextContent;
