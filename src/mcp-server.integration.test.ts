@@ -9,7 +9,6 @@ import { ListToolsResultSchema, TextContent, CallToolResult } from '@modelcontex
 // Create mock functions
 const mockMakeApiCall = jest.fn();
 const mockFindBestMatch = jest.fn();
-// --- NEW: Add a mock for the new getEntitySchema function ---
 const mockGetEntitySchema = jest.fn();
 
 
@@ -18,11 +17,9 @@ jest.unstable_mockModule('./api.js', () => ({
     makeApiCall: mockMakeApiCall
 }));
 
-// --- MODIFIED: Update the EntityManager mock ---
 jest.unstable_mockModule('./entityManager.js', () => ({
     EntityManager: jest.fn().mockImplementation(() => ({
         findBestMatch: mockFindBestMatch,
-        // Add the new mock function here
         getEntitySchema: mockGetEntitySchema
     }))
 }));
@@ -50,12 +47,12 @@ describe('MCP Server Integration Tests', () => {
         mockMakeApiCall.mockResolvedValue({
             content: [{ type: 'text', text: '{"value": []}' }]
         });
-        // --- NEW: Provide a default mock schema for tests ---
         mockGetEntitySchema.mockResolvedValue({
             name: 'CustomersV3',
             fields: [
                 { name: 'dataAreaId', type: 'Edm.String' },
-                { name: 'CustomerAccount', type: 'Edm.String' }
+                { name: 'CustomerAccount', type: 'Edm.String' },
+                { name: 'PurchaseOrderStatus', type: 'Microsoft.Dynamics.DataEntities.PurchStatus' }
             ]
         });
 
@@ -92,7 +89,6 @@ describe('MCP Server Integration Tests', () => {
     });
 
     it('should call getODataMetadata tool successfully', async () => {
-        // Configure the mock's return value for this specific test
         mockMakeApiCall.mockResolvedValue({
             content: [{ type: 'text', text: '<metadata>...</metadata>' }],
         });
@@ -109,30 +105,53 @@ describe('MCP Server Integration Tests', () => {
             expect.any(Function)
         );
 
-        expect(result.content).toBeDefined();
         const textContent = result.content?.[0] as TextContent;
-        expect(textContent.type).toBe('text');
         expect(textContent.text).toBe('<metadata>...</metadata>');
     });
 
-    it('should use EntityManager to correct entity name in odataQuery tool', async () => {
-        // Configure the mock's return value for this specific test
+    // --- NEW TEST: Verify the "plan only" mode ---
+    it('should return a plan when odataQuery is called by default', async () => {
+        const result = await client.callTool({
+            name: 'odataQuery',
+            arguments: {
+                entity: 'customer',
+                filter: { PurchaseOrderStatus: 'Received' }
+            }
+        }) as CallToolResult;
+
+        // Verify it DID NOT try to make an API call
+        expect(mockMakeApiCall).not.toHaveBeenCalled();
+
+        // Verify the plan content
+        expect(result.content).toBeDefined();
+        const textContent = result.content?.[0] as TextContent;
+        expect(textContent.text).toContain('## OData Query Plan');
+        expect(textContent.text).toContain('**Full URL:**');
+        expect(textContent.text).toContain('**Filter Analysis:**');
+        expect(textContent.text).toContain("`PurchaseOrderStatus` | `Microsoft.Dynamics.DataEntities.PurchStatus`");
+        expect(textContent.text).toContain("`planOnly\": false`");
+    });
+
+    // --- MODIFIED TEST: Verify the "execution" mode ---
+    it('should call makeApiCall when odataQuery is called with planOnly=false', async () => {
         mockMakeApiCall.mockResolvedValue({
             content: [{ type: 'text', text: '{"value": [{"id": 1}]}' }],
         });
 
         const result = await client.callTool({
             name: 'odataQuery',
-            arguments: { entity: 'customer' }
+            arguments: {
+                entity: 'customer',
+                // Add the planOnly: false flag to execute the call
+                planOnly: false
+            }
         }) as CallToolResult;
 
-        // Verify EntityManager was called
+        // Verify EntityManager was still used
         expect(mockFindBestMatch).toHaveBeenCalledWith('customer');
-        // --- NEW: Verify the new function was called ---
         expect(mockGetEntitySchema).toHaveBeenCalledWith('CustomersV3');
 
-
-        // Verify the mock was called correctly
+        // Verify the mock WAS called correctly
         expect(mockMakeApiCall).toHaveBeenCalledWith(
             'GET',
             expect.stringContaining('/data/CustomersV3'),
@@ -141,7 +160,6 @@ describe('MCP Server Integration Tests', () => {
         );
 
         // Verify the result
-        expect(result.content).toBeDefined();
         const textContent = result.content?.[0] as TextContent;
         expect(textContent.text).toContain('"id": 1');
     });
