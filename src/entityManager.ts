@@ -1,5 +1,9 @@
+// src/entityManager.ts
+
 import { AuthManager } from './auth.js';
 import Fuse from 'fuse.js';
+// NEW: Import the XML parser
+import { XMLParser } from 'fast-xml-parser';
 
 // Threshold for fuzzy matching (0 = exact match, 1 = match anything)
 const FUZZY_THRESHOLD = 0.6;
@@ -9,11 +13,24 @@ interface ODataEntity {
     url: string;
 }
 
+// NEW: Define an interface for our parsed schema structure.
+interface EntitySchema {
+    name: string;
+    fields: {
+        name: string;
+        type: string;
+        isKey: boolean;
+    }[];
+}
+
+
 /**
  * Manages the list of OData entities, including fetching, caching, and matching.
  */
 export class EntityManager {
     private entityCache: ODataEntity[] | null = null;
+    // NEW: Add a cache for the full entity schemas
+    private schemaCache: Record<string, EntitySchema> | null = null;
     private authManager = new AuthManager();
     private fuse: Fuse<ODataEntity> | null = null;
 
@@ -24,7 +41,7 @@ export class EntityManager {
      */
     public async findBestMatch(query: string): Promise<string | null> {
         if (!this.entityCache) {
-            this.entityCache = await this.fetchEntities();
+            this.entityCache = await this.fetchEntityList(); // MODIFIED: Renamed for clarity
             // Initialize Fuse with the entity cache
             this.fuse = new Fuse(this.entityCache, {
                 keys: ['name', 'url'],
@@ -38,19 +55,33 @@ export class EntityManager {
         }
 
         const results = this.fuse.search(query);
-        
+        // The 'url' field from the service document is the correct name to use in API calls
         if (results.length > 0 && results[0].score !== undefined && results[0].score <= FUZZY_THRESHOLD) {
-            // The 'url' field from the service document is the correct name to use in API calls
             return results[0].item.url;
         }
 
         return null;
     }
 
+    // +++ NEW METHOD +++
+    /**
+     * Retrieves the parsed schema for a specific entity.
+     * @param entityName The official name of the entity (e.g., 'PurchaseOrderHeadersV2').
+     * @returns The parsed schema object, or null if not found.
+     */
+    public async getEntitySchema(entityName: string): Promise<EntitySchema | null> {
+        // If the schema cache is empty, fetch and parse the metadata first.
+        if (!this.schemaCache) {
+            console.log('Schema cache is empty. Fetching and parsing $metadata for the first time...');
+            this.schemaCache = await this.fetchAndParseMetadata();
+        }
+        return this.schemaCache?.[entityName] || null;
+    }
+
     /**
      * Fetches the list of all OData entities from the /data endpoint.
      */
-    private async fetchEntities(): Promise<ODataEntity[]> {
+    private async fetchEntityList(): Promise<ODataEntity[]> { // MODIFIED: Renamed for clarity
         console.log('Fetching OData entity list for the first time...');
         const token = await this.authManager.getAuthToken();
         const url = `${process.env.DYNAMICS_RESOURCE_URL}/data`;
@@ -63,7 +94,6 @@ export class EntityManager {
                     'Accept': 'application/json',
                 },
             });
-
             if (!response.ok) {
                 throw new Error(`Failed to fetch entity list: ${response.statusText}`);
             }
@@ -78,6 +108,61 @@ export class EntityManager {
             console.error("Error fetching entity list:", error);
             // Return an empty array on failure to prevent repeated attempts
             return [];
+        }
+    }
+
+    // +++ NEW METHOD +++
+    /**
+     * Fetches the full OData $metadata, parses it, and caches it.
+     * @returns A record of entity schemas, keyed by entity name.
+     */
+    private async fetchAndParseMetadata(): Promise<Record<string, EntitySchema>> {
+        const token = await this.authManager.getAuthToken();
+        const url = `${process.env.DYNAMICS_RESOURCE_URL}/data/$metadata`;
+        console.log(`Fetching full metadata from ${url}`);
+
+        try {
+            const response = await fetch(url, {
+                method: 'GET',
+                headers: { 'Authorization': `Bearer ${token}` }
+            });
+
+            if (!response.ok) {
+                throw new Error(`Failed to fetch $metadata: ${response.statusText}`);
+            }
+
+            const xmlData = await response.text();
+            const parser = new XMLParser({
+                ignoreAttributes: false,
+                attributeNamePrefix: "@_"
+            });
+            const jsonObj = parser.parse(xmlData);
+
+            const schema: Record<string, EntitySchema> = {};
+            const entityTypes = jsonObj['edmx:Edmx']['edmx:DataServices'].Schema.EntityType;
+
+            for (const entity of entityTypes) {
+                const entityName = entity['@_Name'];
+                const fields: { name: string; type: string; isKey: boolean; }[] = [];
+
+                const keys = (entity.Key?.PropertyRef || []).map((pr: any) => pr['@_Name']);
+
+                if (entity.Property) {
+                    for (const prop of entity.Property) {
+                        fields.push({
+                            name: prop['@_Name'],
+                            type: prop['@_Type'],
+                            isKey: keys.includes(prop['@_Name'])
+                        });
+                    }
+                }
+                schema[entityName] = { name: entityName, fields };
+            }
+            console.log(`Successfully parsed metadata for ${Object.keys(schema).length} entities.`);
+            return schema;
+        } catch (error) {
+            console.error("Error fetching or parsing $metadata:", error);
+            return {}; // Return empty object on failure
         }
     }
 }

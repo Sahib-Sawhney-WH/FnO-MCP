@@ -1,5 +1,3 @@
-// src/mcp-server.ts
-
 import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { z } from 'zod';
 import { makeApiCall } from './api.js';
@@ -16,28 +14,55 @@ async function safeNotification(context: RequestHandlerExtra<ServerRequest, Serv
     try {
         await context.sendNotification(notification);
     } catch (error) {
+        // Silently ignore notification errors
         console.log('Notification failed (this is normal in test environments):', error);
     }
 }
 
-// Helper function to build the OData $filter string from an object
-function buildFilterString(filterObject?: Record<string, string>): string | null {
-    if (!filterObject || Object.keys(filterObject).length === 0) {
+// --- NEW: Schema-Aware Filter Builder ---
+/**
+ * Builds an OData $filter string by looking up field types from the entity schema.
+ * @param filterObject The key-value pairs for filtering.
+ * @param schema The parsed schema for the entity.
+ * @returns A correctly formatted OData filter string.
+ */
+function buildSmartFilterString(filterObject?: Record<string, string>, schema?: any | null): string | null {
+    if (!filterObject || !schema || Object.keys(filterObject).length === 0) {
         return null;
     }
+
     const filterClauses = Object.entries(filterObject).map(([key, value]) => {
-        return `${key} eq '${value}'`;
+        // Find the corresponding field in the schema
+        const schemaField = schema.fields.find((f: any) => f.name.toLowerCase() === key.toLowerCase());
+
+        if (!schemaField) {
+            // If field not in schema, fall back to simple string comparison
+            console.warn(`Field '${key}' not found in schema for '${schema.name}'. Defaulting to string filter.`);
+            return `${key} eq '${value}'`;
+        }
+
+        // Check if the type is an Enum (doesn't start with 'Edm.')
+        if (schemaField.type.startsWith('Edm.')) {
+            // It's a standard type like Edm.String, Edm.Decimal, Edm.Int64
+            // For simplicity, we'll quote them all, but a real implementation
+            // might handle numbers and booleans differently.
+            return `${schemaField.name} eq '${value}'`;
+        } else {
+            // It's an Enum type (e.g., 'Microsoft.Dynamics.DataEntities.PurchStatus')
+            // Construct the fully qualified enum value
+            return `${schemaField.name} eq ${schemaField.type}'${value}'`;
+        }
     });
+
     return filterClauses.join(' and ');
 }
-
 
 // --- Zod Schemas for Tool Arguments ---
 
 const odataQuerySchema = z.object({
     entity: z.string().describe("The OData entity set to query (e.g., CustomersV3, ReleasedProductsV2)."),
     select: z.string().optional().describe("OData $select query parameter to limit the fields returned."),
-    filter: z.record(z.string()).optional().describe("Key-value pairs for filtering. e.g., { ProductNumber: 'D0001', dataAreaId: 'usmf' }."),
+    filter: z.record(z.string()).optional().describe("Key-value pairs for filtering. e.g., { ProductNumber: 'D0001', dataAreaId: 'usmf', PurchaseOrderStatus: 'Received' }."),
     expand: z.string().optional().describe("OData $expand query parameter."),
     // PAGINATION: Updated description for 'top' to explain its role in pagination.
     top: z.number().optional().describe(`The number of records to return per page. Defaults to ${DEFAULT_PAGE_SIZE}.`),
@@ -77,10 +102,9 @@ const updatePositionHierarchySchema = z.object({
     updateData: z.record(z.unknown()).describe("A JSON object with the fields to update (e.g., ParentPositionId)."),
 });
 
-
 /**
  * Creates and configures the MCP server with all the tools for the D365 API.
- * @returns {McpServer} The configured McpServer instance. 
+ * @returns {McpServer} The configured McpServer instance.
  */
 export const getServer = (): McpServer => {
     const server = new McpServer({
@@ -92,19 +116,33 @@ export const getServer = (): McpServer => {
 
     server.tool(
         'odataQuery',
-        'Executes a generic GET request against a Dynamics 365 OData entity. The entity name does not need to be case-perfect. Responses are paginated.',
+        'Executes a generic GET request against a Dynamics 365 OData entity. The entity name does not need to be case-perfect. Responses are paginated. It automatically handles Enum types in filters.',
         odataQuerySchema.shape,
         async (args: z.infer<typeof odataQuerySchema>, context: RequestHandlerExtra<ServerRequest, ServerNotification>) => {
-            
+
             const correctedEntity = await entityManager.findBestMatch(args.entity);
-    
+
             if (!correctedEntity) {
                 return {
                     isError: true,
                     content: [{ type: 'text', text: `Could not find a matching entity for '${args.entity}'. Please provide a more specific name.` }]
                 };
             }
-            
+
+            // +++ NEW LOGIC: Get the schema for the entity +++
+            const entitySchema = await entityManager.getEntitySchema(correctedEntity);
+            if (entitySchema) {
+                await safeNotification(context, {
+                    method: "notifications/message",
+                    params: { level: "info", data: `Found schema for '${correctedEntity}'. I will now build a smart filter.` }
+                });
+            } else {
+                 await safeNotification(context, {
+                    method: "notifications/message",
+                    params: { level: "warn", data: `Could not find schema for '${correctedEntity}'. Falling back to simple filters.` }
+                });
+            }
+
             const effectiveArgs = { ...args };
 
             if (effectiveArgs.filter?.dataAreaId && effectiveArgs.crossCompany !== false) {
@@ -121,11 +159,13 @@ export const getServer = (): McpServer => {
                 method: "notifications/message",
                 params: { level: "info", data: `Corrected entity name from '${args.entity}' to '${correctedEntity}'.` }
             });
-            
-            const { entity, ...queryParams } = effectiveArgs;
-            const filterString = buildFilterString(queryParams.filter);
-            const url = new URL(`${process.env.DYNAMICS_RESOURCE_URL}/data/${correctedEntity}`);
 
+            const { entity, ...queryParams } = effectiveArgs;
+
+            // --- MODIFIED: Use the new smart filter builder ---
+            const filterString = buildSmartFilterString(queryParams.filter, entitySchema);
+
+            const url = new URL(`${process.env.DYNAMICS_RESOURCE_URL}/data/${correctedEntity}`);
             // PAGINATION: Apply query parameters including the new skip and a default top.
             const topValue = queryParams.top || DEFAULT_PAGE_SIZE;
             url.searchParams.append('$top', topValue.toString());
@@ -138,7 +178,7 @@ export const getServer = (): McpServer => {
             if (queryParams.select) url.searchParams.append('$select', queryParams.select);
             if (filterString) url.searchParams.append('$filter', filterString);
             if (queryParams.expand) url.searchParams.append('$expand', queryParams.expand);
-            
+
             return makeApiCall('GET', url.toString(), null, async (notification) => {
                 await safeNotification(context, notification);
             });
