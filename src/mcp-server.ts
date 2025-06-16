@@ -1,3 +1,5 @@
+// src/mcp-server.ts
+
 import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { z } from 'zod';
 import { makeApiCall } from './api.js';
