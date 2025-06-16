@@ -69,7 +69,6 @@ export class EntityManager {
             this.schemaCache = await this.fetchAndParseMetadata();
         }
         
-        // The schema might be keyed by a singular name, so we try a fallback.
         const schema = this.schemaCache?.[entityName];
         if (schema) return schema;
 
@@ -138,7 +137,6 @@ export class EntityManager {
             });
             const jsonObj = parser.parse(xmlData);
 
-            // --- MODIFIED: This is the definitive fix for parsing the metadata ---
             const finalSchemaMap: Record<string, EntitySchema> = {};
             const dataServices = jsonObj['edmx:Edmx']?.['edmx:DataServices'];
             
@@ -150,14 +148,20 @@ export class EntityManager {
             const schemas = Array.isArray(dataServices.Schema) ? dataServices.Schema : [dataServices.Schema];
 
             for (const schema of schemas) {
-                if (!schema.EntityType) continue; // Skip schemas without entity types (like the 'Default' schema)
+                if (!schema.EntityType) continue; 
 
                 const entityTypes = Array.isArray(schema.EntityType) ? schema.EntityType : [schema.EntityType];
 
                 for (const entity of entityTypes) {
                     const entityName = entity['@_Name'];
                     const fields: { name: string; type: string; isKey: boolean; }[] = [];
-                    const keys = (entity.Key?.PropertyRef || []).map((pr: any) => pr['@_Name']);
+                    
+                    // --- MODIFIED: Handle cases where there is only one Primary Key field ---
+                    const rawPropertyRefs = entity.Key?.PropertyRef;
+                    const keys = rawPropertyRefs 
+                        ? (Array.isArray(rawPropertyRefs) ? rawPropertyRefs : [rawPropertyRefs]).map((pr: any) => pr['@_Name']) 
+                        : [];
+                    
                     const properties = entity.Property ? (Array.isArray(entity.Property) ? entity.Property : [entity.Property]) : [];
 
                     for (const prop of properties) {
