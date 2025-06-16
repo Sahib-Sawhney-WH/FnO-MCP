@@ -109,7 +109,6 @@ describe('MCP Server Integration Tests', () => {
         expect(textContent.text).toBe('<metadata>...</metadata>');
     });
 
-    // --- NEW TEST: Verify the "plan only" mode ---
     it('should return a plan when odataQuery is called by default', async () => {
         const result = await client.callTool({
             name: 'odataQuery',
@@ -129,7 +128,9 @@ describe('MCP Server Integration Tests', () => {
         expect(textContent.text).toContain('**Full URL:**');
         expect(textContent.text).toContain('**Filter Analysis:**');
         expect(textContent.text).toContain("`PurchaseOrderStatus` | `Microsoft.Dynamics.DataEntities.PurchStatus`");
-        expect(textContent.text).toContain("`planOnly\": false`");
+        
+        // --- MODIFIED LINE: Make the assertion less fragile ---
+        expect(textContent.text).toContain('"planOnly": false');
     });
 
     // --- MODIFIED TEST: Verify the "execution" mode ---
