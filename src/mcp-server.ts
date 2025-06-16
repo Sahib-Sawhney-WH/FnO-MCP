@@ -21,37 +21,23 @@ async function safeNotification(context: RequestHandlerExtra<ServerRequest, Serv
     }
 }
 
-// --- NEW: Schema-Aware Filter Builder ---
-/**
- * Builds an OData $filter string by looking up field types from the entity schema.
- * @param filterObject The key-value pairs for filtering.
- * @param schema The parsed schema for the entity.
- * @returns A correctly formatted OData filter string.
- */
+// --- Schema-Aware Filter Builder (no changes) ---
 function buildSmartFilterString(filterObject?: Record<string, string>, schema?: any | null): string | null {
     if (!filterObject || !schema || Object.keys(filterObject).length === 0) {
         return null;
     }
 
     const filterClauses = Object.entries(filterObject).map(([key, value]) => {
-        // Find the corresponding field in the schema
         const schemaField = schema.fields.find((f: any) => f.name.toLowerCase() === key.toLowerCase());
 
         if (!schemaField) {
-            // If field not in schema, fall back to simple string comparison
             console.warn(`Field '${key}' not found in schema for '${schema.name}'. Defaulting to string filter.`);
             return `${key} eq '${value}'`;
         }
 
-        // Check if the type is an Enum (doesn't start with 'Edm.')
         if (schemaField.type.startsWith('Edm.')) {
-            // It's a standard type like Edm.String, Edm.Decimal, Edm.Int64
-            // For simplicity, we'll quote them all, but a real implementation
-            // might handle numbers and booleans differently.
             return `${schemaField.name} eq '${value}'`;
         } else {
-            // It's an Enum type (e.g., 'Microsoft.Dynamics.DataEntities.PurchStatus')
-            // Construct the fully qualified enum value
             return `${schemaField.name} eq ${schemaField.type}'${value}'`;
         }
     });
@@ -61,18 +47,19 @@ function buildSmartFilterString(filterObject?: Record<string, string>, schema?: 
 
 // --- Zod Schemas for Tool Arguments ---
 
+// --- MODIFIED: Added 'planOnly' argument ---
 const odataQuerySchema = z.object({
     entity: z.string().describe("The OData entity set to query (e.g., CustomersV3, ReleasedProductsV2)."),
     select: z.string().optional().describe("OData $select query parameter to limit the fields returned."),
-    filter: z.record(z.string()).optional().describe("Key-value pairs for filtering. e.g., { ProductNumber: 'D0001', dataAreaId: 'usmf', PurchaseOrderStatus: 'Received' }."),
+    filter: z.record(z.string()).optional().describe("Key-value pairs for filtering. e.g., { ProductNumber: 'D0001', PurchaseOrderStatus: 'Received' }."),
     expand: z.string().optional().describe("OData $expand query parameter."),
-    // PAGINATION: Updated description for 'top' to explain its role in pagination.
     top: z.number().optional().describe(`The number of records to return per page. Defaults to ${DEFAULT_PAGE_SIZE}.`),
-    // PAGINATION: Added 'skip' parameter for fetching subsequent pages.
     skip: z.number().optional().describe("The number of records to skip. Used for pagination to get the next set of results."),
     crossCompany: z.boolean().optional().describe("Set to true to query across all companies."),
+    planOnly: z.boolean().optional().default(true).describe("Default is true. If true, returns the execution plan without running the query. Set to false to execute the query."),
 });
 
+// ... (rest of the schemas are unchanged)
 const createCustomerSchema = z.object({
     customerData: z.record(z.unknown()).describe("A JSON object for the new customer. Must include dataAreaId, CustomerAccount, etc."),
 });
@@ -104,6 +91,7 @@ const updatePositionHierarchySchema = z.object({
     updateData: z.record(z.unknown()).describe("A JSON object with the fields to update (e.g., ParentPositionId)."),
 });
 
+
 /**
  * Creates and configures the MCP server with all the tools for the D365 API.
  * @returns {McpServer} The configured McpServer instance.
@@ -118,68 +106,70 @@ export const getServer = (): McpServer => {
 
     server.tool(
         'odataQuery',
-        'Executes a generic GET request against a Dynamics 365 OData entity. The entity name does not need to be case-perfect. Responses are paginated. It automatically handles Enum types in filters.',
+        'Executes a generic GET request against a Dynamics 365 OData entity. By default, it returns a plan; set planOnly=false to execute.',
         odataQuerySchema.shape,
+        // --- MODIFIED: The entire tool logic is updated ---
         async (args: z.infer<typeof odataQuerySchema>, context: RequestHandlerExtra<ServerRequest, ServerNotification>) => {
 
             const correctedEntity = await entityManager.findBestMatch(args.entity);
 
             if (!correctedEntity) {
-                return {
-                    isError: true,
-                    content: [{ type: 'text', text: `Could not find a matching entity for '${args.entity}'. Please provide a more specific name.` }]
-                };
+                return { isError: true, content: [{ type: 'text', text: `Could not find a matching entity for '${args.entity}'.` }] };
             }
 
-            // +++ NEW LOGIC: Get the schema for the entity +++
             const entitySchema = await entityManager.getEntitySchema(correctedEntity);
-            if (entitySchema) {
-                await safeNotification(context, {
-                    method: "notifications/message",
-                    params: { level: "info", data: `Found schema for '${correctedEntity}'. I will now build a smart filter.` }
-                });
-            } else {
-                 await safeNotification(context, {
-                    method: "notifications/message",
-                    params: { level: "warn", data: `Could not find schema for '${correctedEntity}'. Falling back to simple filters.` }
-                });
+            if (!entitySchema) {
+                return { isError: true, content: [{ type: 'text', text: `Could not find a schema for entity '${correctedEntity}'.` }] };
             }
 
+            // --- Build the URL and Plan Details ---
             const effectiveArgs = { ...args };
-
             if (effectiveArgs.filter?.dataAreaId && effectiveArgs.crossCompany !== false) {
-                if (!effectiveArgs.crossCompany) {
-                    await safeNotification(context, {
-                        method: "notifications/message",
-                        params: { level: "info", data: `Filter on company ('dataAreaId') detected. Automatically enabling cross-company search.` }
-                    });
-                }
                 effectiveArgs.crossCompany = true;
             }
 
-            await safeNotification(context, {
-                method: "notifications/message",
-                params: { level: "info", data: `Corrected entity name from '${args.entity}' to '${correctedEntity}'.` }
-            });
-
-            const { entity, ...queryParams } = effectiveArgs;
-
-            // --- MODIFIED: Use the new smart filter builder ---
+            const { entity, planOnly, ...queryParams } = effectiveArgs;
             const filterString = buildSmartFilterString(queryParams.filter, entitySchema);
-
             const url = new URL(`${process.env.DYNAMICS_RESOURCE_URL}/data/${correctedEntity}`);
-            // PAGINATION: Apply query parameters including the new skip and a default top.
             const topValue = queryParams.top || DEFAULT_PAGE_SIZE;
             url.searchParams.append('$top', topValue.toString());
-
-            if (queryParams.skip) {
-                url.searchParams.append('$skip', queryParams.skip.toString());
-            }
-
+            if (queryParams.skip) url.searchParams.append('$skip', queryParams.skip.toString());
             if (queryParams.crossCompany) url.searchParams.append('cross-company', 'true');
             if (queryParams.select) url.searchParams.append('$select', queryParams.select);
             if (filterString) url.searchParams.append('$filter', filterString);
             if (queryParams.expand) url.searchParams.append('$expand', queryParams.expand);
+
+            // --- NEW: Generate the plan output ---
+            let planOutput = '## OData Query Plan\n\n';
+            planOutput += `**Full URL:**\n\`\`\`\n${url.toString()}\n\`\`\`\n\n`;
+            planOutput += '**Filter Analysis:**\n';
+
+            if (args.filter && Object.keys(args.filter).length > 0) {
+                planOutput += '| Value Provided | Mapped to Field | Detected Type |\n';
+                planOutput += '|----------------|-----------------|---------------|\n';
+                for (const [key, value] of Object.entries(args.filter)) {
+                    const schemaField = entitySchema.fields.find(f => f.name.toLowerCase() === key.toLowerCase());
+                    const fieldName = schemaField?.name || key;
+                    const fieldType = schemaField?.type || 'Unknown';
+                    planOutput += `| \`${value}\` | \`${fieldName}\` | \`${fieldType}\` |\n`;
+                }
+            } else {
+                planOutput += '_No filters were provided._\n';
+            }
+            
+            planOutput += "\nTo execute this query, call the tool again with the same parameters and `\"planOnly\": false`.";
+
+            // --- NEW: Conditional return based on 'planOnly' ---
+            if (planOnly) {
+                // Return the execution plan instead of calling the API
+                return { content: [{ type: 'text', text: planOutput }] };
+            }
+
+            // If planOnly is false, proceed with the API call
+            await safeNotification(context, {
+                method: "notifications/message",
+                params: { level: "info", data: `Executing query against: ${url.toString()}` }
+            });
 
             return makeApiCall('GET', url.toString(), null, async (notification) => {
                 await safeNotification(context, notification);
@@ -187,6 +177,7 @@ export const getServer = (): McpServer => {
         }
     );
 
+    // ... (rest of the tools are unchanged)
     server.tool(
         'createCustomer',
         'Creates a new customer record in CustomersV3.',
@@ -283,6 +274,7 @@ export const getServer = (): McpServer => {
             });
         }
     );
+
 
     return server;
 };
