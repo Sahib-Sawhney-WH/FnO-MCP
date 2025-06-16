@@ -69,7 +69,16 @@ export class EntityManager {
             this.schemaCache = await this.fetchAndParseMetadata();
         }
         
-        return this.schemaCache?.[entityName] || null;
+        // The schema might be keyed by a singular name, so we try a fallback.
+        const schema = this.schemaCache?.[entityName];
+        if (schema) return schema;
+
+        if (entityName.endsWith('s')) {
+            const singularName = entityName.slice(0, -1);
+            return this.schemaCache?.[singularName] || null;
+        }
+
+        return null;
     }
 
     /**
@@ -129,39 +138,42 @@ export class EntityManager {
             });
             const jsonObj = parser.parse(xmlData);
 
-            const schema: Record<string, EntitySchema> = {};
-            const rawEntityTypes = jsonObj['edmx:Edmx']['edmx:DataServices'].Schema.EntityType;
-
-            // --- MODIFIED: Handle cases where there is only one EntityType ---
-            // Ensure entityTypes is always an array
-            const entityTypes = Array.isArray(rawEntityTypes) ? rawEntityTypes : [rawEntityTypes];
+            // --- MODIFIED: This is the definitive fix for parsing the metadata ---
+            const finalSchemaMap: Record<string, EntitySchema> = {};
+            const dataServices = jsonObj['edmx:Edmx']?.['edmx:DataServices'];
             
-            if (!rawEntityTypes) {
-                console.error("Could not find 'EntityType' in the parsed metadata object.");
+            if (!dataServices || !dataServices.Schema) {
+                console.error("Could not find 'DataServices.Schema' in the parsed metadata object.");
                 return {};
             }
 
-            for (const entity of entityTypes) {
-                const entityName = entity['@_Name'];
-                const fields: { name: string; type: string; isKey: boolean; }[] = [];
+            const schemas = Array.isArray(dataServices.Schema) ? dataServices.Schema : [dataServices.Schema];
 
-                const keys = (entity.Key?.PropertyRef || []).map((pr: any) => pr['@_Name']);
-                
-                // Ensure properties are always an array as well
-                const properties = entity.Property ? (Array.isArray(entity.Property) ? entity.Property : [entity.Property]) : [];
+            for (const schema of schemas) {
+                if (!schema.EntityType) continue; // Skip schemas without entity types (like the 'Default' schema)
 
-                for (const prop of properties) {
-                    fields.push({
-                        name: prop['@_Name'],
-                        type: prop['@_Type'],
-                        isKey: keys.includes(prop['@_Name'])
-                    });
+                const entityTypes = Array.isArray(schema.EntityType) ? schema.EntityType : [schema.EntityType];
+
+                for (const entity of entityTypes) {
+                    const entityName = entity['@_Name'];
+                    const fields: { name: string; type: string; isKey: boolean; }[] = [];
+                    const keys = (entity.Key?.PropertyRef || []).map((pr: any) => pr['@_Name']);
+                    const properties = entity.Property ? (Array.isArray(entity.Property) ? entity.Property : [entity.Property]) : [];
+
+                    for (const prop of properties) {
+                        fields.push({
+                            name: prop['@_Name'],
+                            type: prop['@_Type'],
+                            isKey: keys.includes(prop['@_Name'])
+                        });
+                    }
+                    finalSchemaMap[entityName] = { name: entityName, fields };
                 }
-                schema[entityName] = { name: entityName, fields };
             }
-            
-            console.log(`Successfully parsed metadata. Available schema keys:`, Object.keys(schema));
-            return schema;
+
+            console.log(`Successfully parsed metadata. Available schema keys:`, Object.keys(finalSchemaMap).length);
+            return finalSchemaMap;
+
         } catch (error) {
             console.error("Error fetching or parsing $metadata:", error);
             return {};
