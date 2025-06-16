@@ -2,7 +2,6 @@
 
 import { AuthManager } from './auth.js';
 import Fuse from 'fuse.js';
-// NEW: Import the XML parser
 import { XMLParser } from 'fast-xml-parser';
 
 // Threshold for fuzzy matching (0 = exact match, 1 = match anything)
@@ -13,7 +12,6 @@ interface ODataEntity {
     url: string;
 }
 
-// NEW: Define an interface for our parsed schema structure.
 interface EntitySchema {
     name: string;
     fields: {
@@ -29,7 +27,6 @@ interface EntitySchema {
  */
 export class EntityManager {
     private entityCache: ODataEntity[] | null = null;
-    // NEW: Add a cache for the full entity schemas
     private schemaCache: Record<string, EntitySchema> | null = null;
     private authManager = new AuthManager();
     private fuse: Fuse<ODataEntity> | null = null;
@@ -41,8 +38,7 @@ export class EntityManager {
      */
     public async findBestMatch(query: string): Promise<string | null> {
         if (!this.entityCache) {
-            this.entityCache = await this.fetchEntityList(); // MODIFIED: Renamed for clarity
-            // Initialize Fuse with the entity cache
+            this.entityCache = await this.fetchEntityList(); 
             this.fuse = new Fuse(this.entityCache, {
                 keys: ['name', 'url'],
                 threshold: FUZZY_THRESHOLD,
@@ -55,7 +51,6 @@ export class EntityManager {
         }
 
         const results = this.fuse.search(query);
-        // The 'url' field from the service document is the correct name to use in API calls
         if (results.length > 0 && results[0].score !== undefined && results[0].score <= FUZZY_THRESHOLD) {
             return results[0].item.url;
         }
@@ -63,25 +58,41 @@ export class EntityManager {
         return null;
     }
 
-    // +++ NEW METHOD +++
     /**
      * Retrieves the parsed schema for a specific entity.
      * @param entityName The official name of the entity (e.g., 'PurchaseOrderHeadersV2').
      * @returns The parsed schema object, or null if not found.
      */
     public async getEntitySchema(entityName: string): Promise<EntitySchema | null> {
-        // If the schema cache is empty, fetch and parse the metadata first.
         if (!this.schemaCache) {
             console.log('Schema cache is empty. Fetching and parsing $metadata for the first time...');
             this.schemaCache = await this.fetchAndParseMetadata();
         }
-        return this.schemaCache?.[entityName] || null;
+
+        if (!this.schemaCache) return null;
+
+        // --- MODIFIED: Make lookup plural-insensitive ---
+        // First, try the exact name given (e.g., 'PurchaseOrderHeadersV2')
+        let schema = this.schemaCache[entityName];
+        if (schema) return schema;
+
+        // If not found and the name ends with 's', try the singular version
+        if (entityName.endsWith('s')) {
+            const singularName = entityName.slice(0, -1);
+            console.log(`Could not find schema for '${entityName}', trying singular form '${singularName}'...`);
+            schema = this.schemaCache[singularName];
+            if (schema) return schema;
+        }
+        
+        // --- End of Modification ---
+
+        return null;
     }
 
     /**
      * Fetches the list of all OData entities from the /data endpoint.
      */
-    private async fetchEntityList(): Promise<ODataEntity[]> { // MODIFIED: Renamed for clarity
+    private async fetchEntityList(): Promise<ODataEntity[]> {
         console.log('Fetching OData entity list for the first time...');
         const token = await this.authManager.getAuthToken();
         const url = `${process.env.DYNAMICS_RESOURCE_URL}/data`;
@@ -99,19 +110,16 @@ export class EntityManager {
             }
 
             const data = await response.json();
-            // The payload contains a 'value' array with objects having 'name' and 'url'
             return data.value.map((entity: { name: string, url: string }) => ({
                 name: entity.name,
                 url: entity.url
             }));
         } catch (error) {
             console.error("Error fetching entity list:", error);
-            // Return an empty array on failure to prevent repeated attempts
             return [];
         }
     }
-
-    // +++ NEW METHOD +++
+    
     /**
      * Fetches the full OData $metadata, parses it, and caches it.
      * @returns A record of entity schemas, keyed by entity name.
