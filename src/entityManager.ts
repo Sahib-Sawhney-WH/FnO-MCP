@@ -69,7 +69,6 @@ export class EntityManager {
             this.schemaCache = await this.fetchAndParseMetadata();
         }
         
-        // Return the schema if it exists, otherwise null.
         return this.schemaCache?.[entityName] || null;
     }
 
@@ -131,31 +130,41 @@ export class EntityManager {
             const jsonObj = parser.parse(xmlData);
 
             const schema: Record<string, EntitySchema> = {};
-            const entityTypes = jsonObj['edmx:Edmx']['edmx:DataServices'].Schema.EntityType;
+            const rawEntityTypes = jsonObj['edmx:Edmx']['edmx:DataServices'].Schema.EntityType;
+
+            // --- MODIFIED: Handle cases where there is only one EntityType ---
+            // Ensure entityTypes is always an array
+            const entityTypes = Array.isArray(rawEntityTypes) ? rawEntityTypes : [rawEntityTypes];
+            
+            if (!rawEntityTypes) {
+                console.error("Could not find 'EntityType' in the parsed metadata object.");
+                return {};
+            }
 
             for (const entity of entityTypes) {
                 const entityName = entity['@_Name'];
                 const fields: { name: string; type: string; isKey: boolean; }[] = [];
 
                 const keys = (entity.Key?.PropertyRef || []).map((pr: any) => pr['@_Name']);
+                
+                // Ensure properties are always an array as well
+                const properties = entity.Property ? (Array.isArray(entity.Property) ? entity.Property : [entity.Property]) : [];
 
-                if (entity.Property) {
-                    for (const prop of entity.Property) {
-                        fields.push({
-                            name: prop['@_Name'],
-                            type: prop['@_Type'],
-                            isKey: keys.includes(prop['@_Name'])
-                        });
-                    }
+                for (const prop of properties) {
+                    fields.push({
+                        name: prop['@_Name'],
+                        type: prop['@_Type'],
+                        isKey: keys.includes(prop['@_Name'])
+                    });
                 }
                 schema[entityName] = { name: entityName, fields };
             }
-            // --- NEW: Add detailed logging to see all available schema keys ---
+            
             console.log(`Successfully parsed metadata. Available schema keys:`, Object.keys(schema));
             return schema;
         } catch (error) {
             console.error("Error fetching or parsing $metadata:", error);
-            return {}; // Return empty object on failure
+            return {};
         }
     }
 }
